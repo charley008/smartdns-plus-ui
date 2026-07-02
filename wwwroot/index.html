@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SmartDNS Plus</title><link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="loginOverlay">
+  <div class="login-card">
+    <div class="brand"><div class="brand-mark">S+</div><div><h1>SmartDNS Plus</h1></div></div>
+    <div class="field"><label>用户名</label><input id="username" value="admin" autocomplete="username"></div>
+    <div class="field"><label>密码</label><input id="password" type="password" value="password" autocomplete="current-password"></div>
+    <button id="loginBtn" class="pri" style="width:100%">登录</button>
+  </div>
+</div>
+
+<div class="shell">
+<aside class="sidebar">
+  <div class="brand"><div class="brand-mark">S+</div><div><h1>SmartDNS Plus</h1><p class="dim">配置管理中心</p></div></div>
+  <nav id="nav" class="hidden">
+    <a class="nav-item active" data-page="service">🖥 基础设置</a>
+    <a class="nav-item" data-page="upstreams">🌐 上游 DNS</a>
+    <a class="nav-item" data-page="performance">⚡ 缓存与性能</a>
+    <a class="nav-item" data-page="routing">🔀 上游分流</a>
+    <a class="nav-item" data-page="rules">📋 规则</a>
+    <a class="nav-item" data-page="sets">📁 集合管理</a>
+    <a class="nav-item" data-page="logging">📋 日志与审计</a>
+    <a class="nav-item" data-page="advanced">🔧 高级网络</a>
+    <a class="nav-item" data-page="preview">📄 配置预览</a>
+  </nav>
+  <div id="sidebarFoot" class="hidden">
+    <span id="statusLabel" class="dim">就绪</span>
+    <button id="saveRestartBtn" class="pri" style="width:100%">保存并重启</button>
+    <button id="logoutBtn" class="ghost" style="width:100%">退出</button>
+  </div>
+</aside>
+
+<main id="main" class="hidden">
+  <header class="topbar">
+    <div><h2 id="pageTitle">基础设置</h2><p id="pageDesc" class="dim">SmartDNS 核心服务参数</p></div>
+    <div class="top-acts"><button id="reloadBtn" class="sec">刷新</button></div>
+  </header>
+
+  <!-- 1. 基础设置 -->
+  <section class="page" id="page-service">
+    <div class="card"><h3>监听与服务标识</h3>
+      <div class="fg">
+        <div class="field"><label>bind UDP 端口</label><input id="s_bind" placeholder="53"><span class="hint">SmartDNS 接受 DNS 查询的 UDP 端口号。默认 53</span></div>
+        <div class="field"><label>bind-tcp TCP 端口</label><input id="s_bind_tcp" placeholder="53"><span class="hint">接受 TCP DNS 查询的端口</span></div>
+        <div class="field"><label>server-name</label><input id="s_server_name" placeholder="smartdns"><span class="hint">本 DNS 服务器的名称标识</span></div>
+      </div>
+    </div>
+    <div class="card"><h3>响应与测速 ⚡ SmartDNS 核心特色</h3>
+      <p class="hint-block">这是 SmartDNS 区别于传统 DNS 的核心能力：<b>自动测速选出最快的 IP 返回给你</b>，而不是随机或按顺序返回。</p>
+      <div class="fg">
+        <div class="field"><label>response-mode</label><select id="p_response_mode"><option value="first-ping">first-ping 最快 ping</option><option value="fastest-ip">fastest-ip 只返回最快 IP</option><option value="fastest-response">fastest-response 谁先响应用谁</option></select><span class="hint"><b>推荐 first-ping</b>：ping 最快的 IP 先返回，体验与稳定性兼顾</span></div>
+        <div class="field"><label>speed-check-mode</label><input id="p_speed_check_mode" placeholder="ping,tcp:80,tcp:443"><span class="hint"><b>推荐 ping,tcp:80,tcp:443</b>：ICMP + TCP 综合判断</span></div>
+      </div>
+    </div>
+    <div class="card"><h3>运行参数</h3>
+      <div class="fg">
+        <div class="field"><label>运行用户</label><input id="s_user" placeholder="root"><span class="hint">SmartDNS 进程以哪个系统用户运行</span></div>
+        <div class="field"><label>Socket 缓冲区</label><input id="s_socket_buff" placeholder="留空默认"><span class="hint">UDP Socket 接收缓冲区大小</span></div>
+        <label class="ci"><input type="checkbox" id="s_no_daemon"> 前台运行</label>
+        <label class="ci"><input type="checkbox" id="s_restart_on_crash"> 崩溃自动重启</label>
+        <label class="ci"><input type="checkbox" id="s_mdns_lookup"> mDNS 本地发现</label>
+        <label class="ci"><input type="checkbox" id="s_expand_ptr"> 自动生成 PTR 记录</label>
+      </div>
+    </div>
+    <div class="card"><h3>代理</h3>
+      <div class="fg">
+        <div class="field"><label>名称</label><input id="x_proxy_name" placeholder="proxy"><span class="hint">上游 DNS 中通过 -proxy 引用此名称</span></div>
+        <div class="field s2"><label>代理地址</label><input id="x_proxy_addr" placeholder="socks5://192.168.1.3:10801"><span class="hint">支持 socks5:// 和 http:// 协议</span></div>
+      </div>
+    </div>
+    <div class="card"><h3>Hosts</h3>
+      <div class="fg"><div class="field s2"><label>hosts-file</label><input id="x_hosts_file" placeholder="/etc/smartdns/rules/hosts.txt"></div></div></div>
+    <div class="card"><h3>CA 证书</h3>
+      <div class="fg">
+        <div class="field"><label>ca-file</label><input id="x_ca_file" placeholder="/etc/ssl/certs/ca-certificates.crt"></div>
+        <div class="field"><label>ca-path</label><input id="x_ca_path" placeholder="/etc/ssl/certs/"></div>
+      </div>
+    </div>
+    <div class="card"><h3>引入配置</h3>
+      <div id="confFileList"></div>
+      <div class="add-row"><input id="cfPath" placeholder="/etc/smartdns/rules/custom.conf"><input id="cfGroup" placeholder="规则组（可选）"><button id="addConfFileBtn" class="pri">添加</button></div>
+    </div>
+  </section>
+
+  <!-- 2. 上游 DNS -->
+  <section class="page hidden" id="page-upstreams">
+    <div class="card hint"><strong>💡 上游 DNS</strong><p>SmartDNS 向上游 DNS 查询，再把最快结果返回给你。按分组管理，配合分流规则让不同域名走不同线路。</p></div>
+    <div id="upstreamGroups"></div>
+    <div style="text-align:center;padding:10px"><button id="addUpstreamModalBtn" class="pri">添加上游 DNS</button></div>
+  </section>
+
+  <!-- 3. 缓存与性能 -->
+  <section class="page hidden" id="page-performance">
+    <div class="card"><h3>缓存</h3>
+      <div class="fg">
+        <div class="field"><label>cache-size</label><input id="p_cache_size" placeholder="32768"><span class="hint">缓存条目数，0 禁用</span></div>
+        <div class="field"><label>缓存持久化</label><select id="p_cache_persist"><option value="">默认</option><option value="yes">yes</option><option value="no">no</option></select></div>
+        <div class="field"><label>cache-file</label><input id="p_cache_file" placeholder="/tmp/smartdns.cache"></div>
+        <label class="ci"><input type="checkbox" id="p_prefetch_domain"> 预取缓存</label>
+      </div>
+    </div>
+    <div class="card"><h3>过期缓存</h3>
+      <div class="fg">
+        <label class="ci"><input type="checkbox" id="p_serve_expired" checked> 启用过期缓存兜底</label>
+        <div class="field"><label>最长过期时间</label><input id="p_serve_expired_ttl" placeholder="86400"></div>
+        <div class="field"><label>返回 TTL</label><input id="p_serve_expired_reply_ttl" placeholder="3"></div>
+        <div class="field"><label>预刷新提前量</label><input id="p_serve_expired_prefetch" placeholder="留空"></div>
+      </div>
+    </div>
+    <div class="card"><h3>TTL 控制</h3>
+      <div class="fg">
+        <div class="field"><label>最短 TTL</label><input id="p_rr_ttl_min" placeholder="60"></div>
+        <div class="field"><label>最长 TTL</label><input id="p_rr_ttl_max" placeholder="86400"></div>
+        <div class="field"><label>响应最大 TTL</label><input id="p_rr_ttl_reply_max" placeholder="留空"></div>
+        <div class="field"><label>本地记录 TTL</label><input id="p_local_ttl" placeholder="3"></div>
+      </div>
+    </div>
+    <div class="card"><h3>查询控制</h3>
+      <div class="fg">
+        <div class="field"><label>最大返回 IP 数</label><input id="p_max_reply_ip" placeholder="留空"></div>
+        <div class="field"><label>最大并发查询</label><input id="p_max_query_limit" placeholder="留空"></div>
+        <div class="field"><label>TCP 空闲超时</label><input id="p_tcp_idle_time" placeholder="留空"></div>
+      </div>
+    </div>
+    <div class="card"><h3>双栈优选</h3>
+      <div class="fg">
+        <label class="ci"><input type="checkbox" id="p_dualstack" checked> 启用双栈优选</label>
+        <div class="field"><label>选择阈值 (ms)</label><input id="p_dualstack_threshold" placeholder="留空默认"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. 上游分流 -->
+  <section class="page hidden" id="page-routing">
+    <div class="card hint">
+      <strong>💡 上游分流</strong>
+      <p>决定"哪个域名走哪条线路"以及"域名返回什么地址"。匹配顺序从上到下，先匹配先生效。</p>
+      <p style="margin-top:4px;font-size:12px;color:#6b7280">匹配顺序从上到下，先匹配先生效。域名后缀匹配时不需要加点，输入 <code>cn</code> 即匹配所有 .cn 结尾域名。</p>
+    </div>
+    <div class="card"><h3>新增分流</h3>
+      <div class="fg">
+        <div class="field"><label>目标类型</label><select id="rtTargetType"><option value="domain-set">域名集合</option><option value="suffix">域名后缀（如 cn）</option><option value="domain">具体域名</option></select></div>
+        <div class="field s2"><label>目标值</label><select id="rtTargetDS" style="display:none"></select><input id="rtTargetInput" placeholder="cn 或 example.com"></div>
+        <div class="field s2"><label>上游组</label><select id="rtValSelect"></select></div>
+      </div>
+      <button id="addRoutingBtn" class="pri">新增</button>
+    </div>
+    <div id="routingList"></div>
+  </section>
+
+  <!-- 5. 规则 -->
+  <section class="page hidden" id="page-rules">
+    <div class="card"><h3>域名规则 (domain-rules)</h3>
+      <p class="hint-block">对指定域名设置特殊处理：不缓存、禁 IPv6、指定上游组、双栈优选等。</p>
+      <div id="domainRulesList"></div>
+      <div class="card ac" style="margin-top:10px"><h3>新增域名规则</h3>
+        <div class="fg">
+          <div class="field"><label>目标类型</label><select id="drTargetType"><option value="domain-set">域名集合</option><option value="suffix">域名后缀</option><option value="domain">具体域名</option></select></div>
+          <div class="field s2"><label>目标值</label><select id="drTargetDS" style="display:none"></select><input id="drTargetInput" placeholder="cn 或 example.com"></div>
+          <label class="ci"><input type="checkbox" id="drNoCache"> 不缓存 (-no-cache)</label>
+          <label class="ci"><input type="checkbox" id="drNoExpired"> 不兜底过期 (-no-serve-expired)</label>
+          <label class="ci"><input type="checkbox" id="drNoIpAlias"> 忽略 IP 别名 (-no-ip-alias)</label>
+          <div class="field"><label>IPv4/IPv6</label><select id="drAddr6"><option value="">不限制</option><option value="-address #6">禁止 IPv6</option><option value="-address #4">禁止 IPv4</option></select></div>
+          <div class="field"><label>上游组 (-nameserver)</label><select id="drNSGroup"><option value="">不指定</option></select></div>
+          <div class="field"><label>双栈优选</label><select id="drDual"><option value="">不设置</option><option value="-dualstack-ip-selection">启用</option><option value="-dualstack-ip-selection no">禁用</option></select></div>
+          <div class="field"><label>响应模式</label><select id="drResMode"><option value="">不设置</option><option value="-response-mode first-ping">first-ping</option><option value="-response-mode fastest-ip">fastest-ip</option><option value="-response-mode fastest-response">fastest-response</option></select></div>
+          <div class="field"><label>TTL 最小</label><input id="drTtlMin" placeholder="秒"></div>
+          <div class="field"><label>TTL 最大</label><input id="drTtlMax" placeholder="秒"></div>
+        </div>
+        <button id="addDomainRuleBtn" class="pri" style="margin-top:6px">新增域名规则</button>
+      </div>
+    </div>
+    <div class="card" style="margin-top:14px"><h3>地址改写与别名 (address / cname)</h3>
+      <p class="hint-block"><b>address</b>：强制域名返回指定 IP，或用 # 屏蔽；<b>cname</b>：域名别名到另一个域名。</p>
+      <div id="addrCnameList"></div>
+      <div class="fg" style="margin-top:10px">
+        <div class="field"><label>类型</label><select id="acType"><option value="address">address 返回IP/屏蔽</option><option value="cname">cname 域名别名</option></select></div>
+        <div class="field"><label>目标类型</label><select id="acTargetType"><option value="domain-set">域名集合</option><option value="domain">具体域名</option></select></div>
+        <div class="field s2"><label>目标值</label><select id="acTargetDS" style="display:none"></select><input id="acTargetInput" placeholder="example.com"></div>
+        <div class="field s2"><label id="acValLabel">返回值</label><input id="acValInput" placeholder="# 屏蔽 或 1.2.3.4 或 cdn.example.com"></div>
+      </div>
+      <button id="addAddrCnameBtn" class="pri" style="margin-top:6px">新增</button>
+    </div>
+    <div class="card" style="margin-top:14px"><h3>IP 规则</h3>
+      <p class="hint-block">对上游返回的 IP 进行过滤：忽略、白名单、黑名单、假冒 NXDOMAIN、IP 别名等。</p>
+      <div id="ipRuleList"></div>
+      <div class="fg" style="margin-top:10px">
+        <div class="field"><label>类型</label><select id="irType"><option value="ignore-ip">ignore-ip 忽略</option><option value="whitelist-ip">whitelist-ip 白名单</option><option value="blacklist-ip">blacklist-ip 黑名单</option><option value="bogus-nxdomain">bogus-nxdomain 假 NX</option><option value="ip-alias">ip-alias IP 别名</option><option value="ip-rules">ip-rules 通用</option></select></div>
+        <div class="field"><label>目标</label><input id="irTarget" placeholder="1.2.3.4 或 ip-set:cloudflare"></div>
+        <div class="field"><label>附加参数</label><input id="irOptions" placeholder="可选"></div>
+      </div>
+      <button id="addIpRuleBtn" class="pri" style="margin-top:6px">新增 IP 规则</button>
+    </div>
+  </section>
+
+  <!-- 5. 集合管理 -->
+  <section class="page hidden" id="page-sets">
+    <div class="card hint">
+      <strong>📁 集合管理</strong>
+      <p>把域名或 IP/CIDR 放在文件里，分流规则通过 <code>/domain-set:名称/</code> 引用，IP 规则通过 <code>ip-set:名称</code> 引用。文件内容请在服务器上编辑上传。</p>
+    </div>
+    <div id="setList"></div>
+    <div class="card ac"><h3>新增集合</h3>
+      <div class="fg">
+        <div class="field"><label>类型</label><select id="setType"><option value="domain-set">域名集合 (domain-set)</option><option value="ip-set">IP 集合 (ip-set)</option></select></div>
+        <div class="field"><label>名称</label><input id="setName" placeholder="direct 或 cloudflare"></div>
+        <div class="field s2"><label>文件路径</label><input id="setFile" placeholder="/etc/smartdns/rules/list.txt"></div>
+      </div>
+      <button id="addSetBtn" class="pri">新增</button>
+    </div>
+  </section>
+
+  <!-- 6. 日志与审计 -->
+  <section class="page hidden" id="page-logging">
+    <div class="card"><h3>日志</h3>
+      <div class="fg">
+        <div class="field"><label>log-level</label><select id="l_log_level"><option value="error">error</option><option value="warn">warn</option><option value="notice">notice</option><option value="info" selected>info</option><option value="debug">debug</option></select></div>
+        <div class="field"><label>log-file</label><input id="l_log_file" placeholder="/var/log/smartdns/smartdns.log"></div>
+        <div class="field"><label>log-size</label><input id="l_log_size" placeholder="16m"></div>
+        <div class="field"><label>log-num</label><input id="l_log_num" placeholder="8"></div>
+        <label class="ci"><input type="checkbox" id="l_log_console"> 控制台输出</label>
+        <label class="ci"><input type="checkbox" id="l_log_syslog"> syslog 输出</label>
+      </div>
+    </div>
+    <div class="card"><h3>审计</h3>
+      <div class="fg">
+        <label class="ci"><input type="checkbox" id="l_audit_enable"> 启用审计</label>
+        <div class="field"><label>audit-file</label><input id="l_audit_file" placeholder="/var/log/smartdns/smartdns-audit.log"></div>
+        <div class="field"><label>audit-size</label><input id="l_audit_size" placeholder="1m"></div>
+        <div class="field"><label>audit-num</label><input id="l_audit_num" placeholder="1"></div>
+        <label class="ci"><input type="checkbox" id="l_audit_console"> 控制台输出</label>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7. 高级网络 -->
+  <section class="page hidden" id="page-advanced">
+    <div class="card"><h3>DNS 查询控制</h3>
+      <div class="fg">
+        <div class="field"><label>force-qtype-SOA</label><input id="a_force_qtype_soa" placeholder="65"><span class="hint">对指定 TYPE 返回 SOA</span></div>
+        <label class="ci"><input type="checkbox" id="a_force_aaaa_soa"> 禁止 IPv6</label>
+        <label class="ci"><input type="checkbox" id="a_force_no_cname"> 扁平化 CNAME</label>
+      </div>
+    </div>
+    <div class="card"><h3>EDNS Client Subnet</h3>
+      <div class="fg"><div class="field s2"><label>edns-client-subnet</label><input id="a_ecs" placeholder="180.139.215.40/24"></div></div></div>
+    <div class="card"><h3>DNS64</h3>
+      <div class="fg"><div class="field s2"><label>dns64</label><input id="a_dns64" placeholder="64:ff9b::/96"></div></div></div>
+    <div class="card"><h3>DDNS / 本地域名</h3>
+      <div class="fg">
+        <div class="field"><label>ddns-domain</label><input id="a_ddns_domain" placeholder="myhome.example.com"></div>
+        <div class="field"><label>local-domain</label><input id="a_local_domain" placeholder="lan"></div>
+        <div class="field"><label>dnsmasq-lease-file</label><input id="a_dnsmasq_lease" placeholder="/var/lib/misc/dnsmasq.leases"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8. 配置预览 -->
+  <section class="page hidden" id="page-preview">
+    <div class="card hint"><strong>📄 smartdns.conf 预览（已内联 plus-ui 配置）— 点击"保存并重启"后生效</strong></div>
+    <div class="card"><textarea id="previewText" rows="30" readonly style="font-family:monospace;font-size:13px;background:#f8f9fb;white-space:pre"></textarea></div>
+  </section>
+</main>
+</div>
+
+<!-- Modal: Add Upstream -->
+<div id="upModal" class="modal hidden">
+  <div class="modal-bg"></div>
+  <div class="modal-box">
+    <div class="modal-head"><h3>添加上游 DNS</h3><button id="upModalClose" class="ghost">✕</button></div>
+    <div class="fg fg4">
+      <div class="field"><label>协议</label><select id="upProto"><option value="server">UDP</option><option value="server-tcp">TCP</option><option value="server-tls">TLS</option><option value="server-https" selected>HTTPS</option><option value="server-quic">QUIC</option><option value="server-http3">HTTP3</option></select></div>
+      <div class="field s2"><label>地址</label><input id="upValue" placeholder="https://dns.alidns.com/dns-query"></div>
+      <div class="field"><label>分组</label><select id="upGroupsSelect"><option value="">（选择已有分组）</option></select><input id="upGroupNew" class="hidden" placeholder="输入新分组名" style="margin-top:4px"></div>
+      <div class="field"><label>代理</label><select id="upProxy"><option value="">不使用代理</option></select></div>
+      <div class="field"><label>Bootstrap DNS</label><input id="upBootstrap" placeholder="8.8.8.8"></div>
+      <div class="field"><label>Host IP</label><input id="upHostIp" placeholder="223.5.5.5"></div>
+      <div class="field"><label>Subnet</label><input id="upSubnet" placeholder="180.139.215.40/24"></div>
+      <div class="field"><label>HTTP Host</label><input id="upHttpHost" placeholder="dns.alidns.com"></div>
+      <div class="field"><label>TLS SNI</label><input id="upTlsSni" placeholder="留空自动"></div>
+      <div class="field"><label>SPKI Pin</label><input id="upSpkiPin" placeholder="base64 SHA256"></div>
+      <div class="field"><label>绑定网口</label><input id="upInterface" placeholder="eth0"></div>
+      <div class="field"><label>SO_MARK</label><input id="upSetMark" placeholder="整数"></div>
+      <div class="field"><label>黑名单 IP</label><input id="upBlacklistIp" placeholder="1.0.0.0/8"></div>
+      <div class="field"><label>白名单 IP</label><input id="upWhitelistIp" placeholder="1.2.3.0/24"></div>
+      <div class="field"><label>TCP Keepalive</label><input id="upTcpKa" placeholder="留空默认(ms)"></div>
+      <div class="field"><label>备注</label><input id="upNote" placeholder="国内主用"></div>
+      <label class="ci"><input type="checkbox" id="upExcludeDefault"> 排除默认组</label>
+      <label class="ci"><input type="checkbox" id="upFallback"> Fallback</label>
+      <label class="ci"><input type="checkbox" id="upTlsHostVerify"> 验证 TLS 主机名</label>
+      <label class="ci"><input type="checkbox" id="upNoCheckCert"> 跳过证书验证</label>
+    </div>
+    <div class="modal-acts"><button id="upModalCancel" class="sec">取消</button><button id="addUpstreamBtn" class="pri">新增</button></div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

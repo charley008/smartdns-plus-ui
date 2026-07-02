@@ -1,0 +1,15 @@
+/target
+
+# Rust lockfile: keep ignored for now because this plugin project is being
+# treated like a reusable component rather than a standalone app.
+Cargo.lock
+
+# Local notes / temp artifacts
+*.tmp
+*.log
+*.bak
+*.orig
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
