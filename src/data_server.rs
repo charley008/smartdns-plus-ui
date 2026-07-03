@@ -864,7 +864,8 @@ impl DataServer {
                 let _ = DataServer::call_blocking(this.clone(), move || {
                     let _ = this_clone.insert_client_by_list(&flush_list);
                     Ok::<(), String>(())
-                }).await;
+                })
+                .await;
             }
         }
 

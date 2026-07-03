@@ -1,14 +1,51 @@
 // ── State ────────────────────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
-const S = { page:"service", config:null, managed:{rule_groups:[],client_rules:[],ip_rules:[],routing_items:[],domain_sets:[],ip_sets:[],_deleted:[]}, upstreams:[], confFiles:[], includeFiles:[], extras:{} };
+const S = {
+  page:"dashboard",
+  config:null,
+  settings:{},
+  managed:{rule_groups:[],client_rules:[],ip_rules:[],routing_items:[],domain_sets:[],ip_sets:[],_deleted:[]},
+  upstreams:[],
+  confFiles:[],
+  includeFiles:[],
+  extras:{},
+  dashboard:{overview:null,metrics:null,hourly:null,daily:null,topDomains:[],topClients:[]},
+  queryLog:{page:1,pageSize:20,totalCount:0,totalPage:1,items:[],filters:{}},
+  clients:{page:1,pageSize:20,totalCount:0,totalPage:1,items:[],filters:{}},
+  upstreamStats:[],
+  runtimeLog:{socket:null,paused:false,connected:false,lines:[],kind:"runtime"},
+  terminal:{socket:null,term:null,connected:false},
+  versionInfo:{smartdns:"--",smartdns_ui:"--"}
+};
+const MANAGED_CONF_FILES = [
+  "/10-basic.conf",
+  "/20-upstreams.conf",
+  "/30-cache.conf",
+  "/40-nameserver.conf",
+  "/50-rules.conf",
+  "/60-sets.conf",
+  "/70-logging.conf",
+  "/80-network.conf",
+  "/plus-ui-basic.conf",
+  "/plus-ui-upstreams.conf",
+  "/plus-ui-rules.conf"
+];
+const THEME_KEY = "sp_theme";
+const CONFIG_PAGES = ["service","upstreams","performance","routing","rules","sets","logging","advanced","preview"];
 
 const META = {
+  dashboard:  {t:"仪表盘", d:"总查询、QPS、缓存命中率、趋势概览" },
+  querylog:   {t:"查询日志", d:"域名查询记录、分组、耗时、拦截状态" },
+  upstreamstats:{t:"上游服务器", d:"上游状态、成功率、平均响应时间" },
+  clients:    {t:"客户端", d:"客户端 IP、MAC、主机名、最近查询时间" },
+  runtimelog: {t:"运行日志", d:"实时 smartdns 运行日志流" },
+  terminal:   {t:"终端", d:"连接容器内 Shell 进行调试与排障" },
   service:    {t:"基础设置",  d:"监听、测速、代理、hosts、证书" },
-  upstreams:  {t:"上游 DNS", d:"6 种协议 + 15 个选项" },
+  upstreams:  {t:"上游 DNS 设置", d:"6 种协议 + 15 个选项" },
   performance:{t:"缓存与性能",d:"cache-size、TTL、双栈" },
-  routing:    {t:"上游分流", d:"nameserver — 域名走哪个上游组" },
-  rules:      {t:"规则",     d:"domain-rules 域名行为 + IP 规则" },
+  routing:    {t:"分流设置", d:"nameserver — 域名走哪个上游组" },
+  rules:      {t:"规则设置", d:"domain-rules 域名行为 + IP 规则" },
   sets:       {t:"集合管理", d:"domain-set + ip-set 名称和文件路径" },
   logging:    {t:"日志与审计",d:"log-* / audit-*" },
   advanced:   {t:"高级网络",  d:"ECS、DNS64、DDNS、force-*" },
@@ -18,24 +55,131 @@ const META = {
 // ── API ───────────────────────────────────────────────────────────────
 function ah() { const t=localStorage.getItem("sp_token"); return t?{Authorization:t}:{}; }
 async function api(url,o={}) {
-  const r=await fetch(url,{...o,headers:{"Content-Type":"application/json",...ah(),...(o.headers||{})}});
+  const r=await fetch(url,{credentials:"same-origin",...o,headers:{"Content-Type":"application/json",...ah(),...(o.headers||{})}});
   if(!r.ok){const t=await r.text();throw new Error(t||`HTTP ${r.status}`);}
   const t=await r.text(); return t?JSON.parse(t):{};
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────
+async function refreshAuthSession(){
+  const r=await api("/api/auth/refresh",{method:"POST"});
+  if(r?.token)localStorage.setItem("sp_token",`Bearer ${r.token}`);
+  return r;
+}
+
 async function login() {
   const r=await api("/api/auth/login",{method:"POST",body:JSON.stringify({username:$("username").value.trim(),password:$("password").value})});
-  localStorage.setItem("sp_token",`Bearer ${r.token}`); showApp();
+  localStorage.setItem("sp_token",`Bearer ${r.token}`);
+  try{await refreshAuthSession();}catch(_){}
+  showApp();
 }
 async function logout(){localStorage.removeItem("sp_token");showLogin();$("nav").classList.add("hidden");$("sidebarFoot").classList.add("hidden");$("main").classList.add("hidden");}
-async function checkAuth(){try{await api("/api/auth/check");showApp();}catch(_){showLogin();}}
+async function checkAuth(){
+  try{
+    await api("/api/auth/check");
+    try{await refreshAuthSession();}catch(_){}
+    showApp();
+  }catch(_){showLogin();}
+}
+
+function clearPasswordChangeForm(){
+  $("admOldPassword").value="";
+  $("admNewPassword").value="";
+  $("admConfirmPassword").value="";
+}
 
 function showLogin(){ $("loginOverlay").classList.remove("hidden"); }
 
 function showApp(){
   $("loginOverlay").classList.add("hidden");$("nav").classList.remove("hidden");$("sidebarFoot").classList.remove("hidden");$("main").classList.remove("hidden");
   loadAll();
+}
+
+function getSavedTheme(){
+  return localStorage.getItem(THEME_KEY)||"light";
+}
+
+function updateThemeButton(){
+  const btn=$("themeBtn");
+  if(!btn)return;
+  const theme=getSavedTheme();
+  btn.textContent=theme==="dark"?"浅色模式":"深色模式";
+}
+
+function applyTheme(theme){
+  const next=theme==="dark"?"dark":"light";
+  document.documentElement.setAttribute("data-theme", next);
+  localStorage.setItem(THEME_KEY, next);
+  updateThemeButton();
+}
+
+function toggleTheme(){
+  applyTheme(getSavedTheme()==="dark"?"light":"dark");
+}
+
+function termWsUrl(){
+  const proto=location.protocol==="https:"?"wss":"ws";
+  return `${proto}://${location.host}/api/tool/term`;
+}
+
+function renderFooterVersion(){
+  if($("footerUiVersion"))$("footerUiVersion").textContent=`UI 版本: ${S.versionInfo.smartdns_ui||"--"}`;
+  if($("footerServerVersion"))$("footerServerVersion").textContent=`服务器版本: ${S.versionInfo.smartdns||"--"}`;
+}
+
+async function loadVersionInfo(){
+  try{
+    const v=await api("/api/server/version");
+    S.versionInfo={
+      smartdns:v.smartdns||"--",
+      smartdns_ui:v.smartdns_ui||"--"
+    };
+  }catch(_){
+    S.versionInfo={smartdns:"--",smartdns_ui:"--"};
+  }
+  renderFooterVersion();
+}
+
+async function loadUiSettings(){
+  try{
+    S.settings=await api("/api/config/settings");
+  }catch(_){
+    S.settings={};
+  }
+  syncTerminalCapability();
+}
+
+function terminalEnabled(){
+  return String(S.settings.enable_terminal).toLowerCase()==="true";
+}
+
+function syncTerminalCapability(){
+  const enabled=terminalEnabled();
+  $("terminalNavItem")?.classList.toggle("hidden",!enabled);
+  if(!enabled&&S.page==="terminal"){
+    closeTerminalSocket();
+    goto("dashboard");
+  }
+}
+
+function isConfigPage(page){
+  return CONFIG_PAGES.includes(page);
+}
+
+function setSettingsMenu(open){
+  const submenu=$("settingsSubmenu");
+  const toggle=$("settingsToggle");
+  if(!submenu||!toggle)return;
+  submenu.classList.toggle("hidden",!open);
+  toggle.classList.toggle("expanded",open);
+}
+
+function syncNavState(page){
+  const configPage=isConfigPage(page);
+  document.querySelectorAll(".nav-item[data-page]").forEach(e=>e.classList.toggle("active",e.dataset.page===page));
+  document.querySelectorAll(".nav-subitem").forEach(e=>e.classList.toggle("active",e.dataset.page===page));
+  $("settingsToggle")?.classList.toggle("active",configPage);
+  if(configPage)setSettingsMenu(true);
 }
 
 function parseConfFilesFromText(text){
@@ -53,7 +197,7 @@ function parseConfFilesFromText(text){
     for(let i=1;i<parts.length;i++){
       if(parts[i]==="-group"&&parts[i+1]){group=parts[i+1];break;}
     }
-    const managed=path.includes("/plus-ui-basic.conf")||path.includes("/plus-ui-upstreams.conf")||path.includes("/plus-ui-rules.conf");
+    const managed=MANAGED_CONF_FILES.some(name=>path.includes(name));
     files.push({path,group,managed});
   }
   return files;
@@ -79,6 +223,96 @@ function tokenizeArgs(text){
 function stripQuotes(text){
   if(!text)return "";
   return text.startsWith('"')&&text.endsWith('"')?text.slice(1,-1):text;
+}
+
+function renderSetName(name){
+  return `<span class="clr-ds">${esc(name||"")}</span>`;
+}
+
+function showPageError(id){
+  return (e)=>{
+    const el=$(id);
+    if(el)el.innerHTML=`<div class="card empty">加载失败：${esc(e.message||e)}</div>`;
+  };
+}
+
+function fmtNumber(v){
+  const n=Number(v||0);
+  return Number.isFinite(n)?n.toLocaleString("zh-CN"):"0";
+}
+
+function fmtPercent(v){
+  const n=Number(v||0);
+  return `${n.toFixed(1)}%`;
+}
+
+function fmtMs(v){
+  const n=Number(v||0);
+  return `${n.toFixed(n>=100?0:1)} ms`;
+}
+
+function fmtBytes(v){
+  let n=Number(v||0);
+  if(!Number.isFinite(n)||n<=0)return "0 B";
+  const units=["B","KB","MB","GB","TB"];
+  let idx=0;
+  while(n>=1024&&idx<units.length-1){n/=1024;idx++;}
+  return `${n.toFixed(n>=100||idx===0?0:2)} ${units[idx]}`;
+}
+
+function fmtDateTime(ts){
+  if(!ts)return "-";
+  const d=new Date(Number(ts)*1000);
+  if(Number.isNaN(d.getTime()))return "-";
+  return d.toLocaleString("zh-CN",{hour12:false});
+}
+
+function createLineChart(points, keyName, valueName, color){
+  const list=(points||[]).filter(Boolean);
+  if(!list.length)return `<div class="card empty">暂无数据</div>`;
+  const width=760, height=220, pad=24;
+  const values=list.map(x=>Number(x[valueName]||0));
+  const max=Math.max(...values,1);
+  const min=0;
+  const xStep=list.length>1?(width-pad*2)/(list.length-1):0;
+  const y=(v)=>height-pad-((v-min)/(max-min||1))*(height-pad*2);
+  const pts=list.map((item,i)=>`${pad+i*xStep},${y(Number(item[valueName]||0))}`).join(" ");
+  const grid=[0,.25,.5,.75,1].map(r=>{
+    const yy=pad+r*(height-pad*2);
+    return `<line x1="${pad}" y1="${yy}" x2="${width-pad}" y2="${yy}" stroke="var(--border)" stroke-width="1"/>`;
+  }).join("");
+  const labels=list.map(item=>`<span title="${esc(item[keyName])}">${esc(item[keyName])}</span>`).join("");
+  return `<div class="simple-chart">
+    <svg class="chart-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+      ${grid}
+      <polyline fill="none" stroke="${color}" stroke-width="3" points="${pts}" stroke-linecap="round" stroke-linejoin="round"></polyline>
+      ${list.map((item,i)=>`<circle cx="${pad+i*xStep}" cy="${y(Number(item[valueName]||0))}" r="3.5" fill="${color}"></circle>`).join("")}
+    </svg>
+    <div class="chart-labels">${labels}</div>
+  </div>`;
+}
+
+function renderTable(columns, rows, emptyText="暂无数据"){
+  if(!rows||!rows.length)return `<div class="card empty">${emptyText}</div>`;
+  return `<div class="data-table-wrap"><table class="data-table"><thead><tr>${
+    columns.map(c=>`<th>${esc(c.label)}</th>`).join("")
+  }</tr></thead><tbody>${
+    rows.map(row=>`<tr>${columns.map(c=>`<td>${c.render?c.render(row):esc(row[c.key]??"")}</td>`).join("")}</tr>`).join("")
+  }</tbody></table></div>`;
+}
+
+function renderPager(targetId, state, onPage){
+  const el=$(targetId);
+  if(!el)return;
+  const total=state.totalCount||0, totalPage=state.totalPage||1, page=state.page||1;
+  el.innerHTML=`<span>共 ${fmtNumber(total)} 条，第 ${page} / ${Math.max(totalPage,1)} 页</span>
+    <div class="top-acts">
+      <button class="sec" ${page<=1?"disabled":""} data-page="prev">上一页</button>
+      <button class="sec" ${page>=totalPage?"disabled":""} data-page="next">下一页</button>
+    </div>`;
+  el.querySelectorAll("button[data-page]").forEach(btn=>{
+    btn.onclick=()=>onPage(btn.dataset.page==="prev"?page-1:page+1);
+  });
 }
 
 function parseManagedUpstream(kind,value,options){
@@ -128,15 +362,28 @@ function parseManagedUpstreamsText(text){
 
 // ── Nav ───────────────────────────────────────────────────────────────
 function goto(p){
+  if(S.page==="runtimelog"&&p!=="runtimelog")closeRuntimeLogSocket();
+  if(S.page==="terminal"&&p!=="terminal")closeTerminalSocket();
   S.page=p; const m=META[p]||{};
   $("pageTitle").textContent=m.t;$("pageDesc").textContent=m.d||"";
-  document.querySelectorAll(".nav-item").forEach(e=>e.classList.toggle("active",e.dataset.page===p));
+  syncNavState(p);
   document.querySelectorAll(".page").forEach(e=>e.classList.toggle("hidden",e.id!==`page-${p}`));
+  if(p==="dashboard")loadDashboard().catch(showPageError("dashboardMetrics"));
+  if(p==="querylog")loadQueryLog().catch(showPageError("queryLogTable"));
+  if(p==="upstreamstats")loadUpstreamStats().catch(showPageError("upstreamStatsTable"));
+  if(p==="clients")loadClients().catch(showPageError("clientsTable"));
+  if(p==="runtimelog")ensureRuntimeLogStream();
+  if(p==="terminal")ensureTerminal();
   if(p==="preview")renderPreview().catch(e=>$("previewText").value="加载失败: "+e.message);
   if(p==="routing"){populateRoutingDropdowns();onRtFormChange();}
   if(p==="rules"){populateRoutingDropdowns();renderAddrCname();renderDomainRules();renderIpRules();}
 }
-document.querySelectorAll(".nav-item").forEach(e=>{e.onclick=()=>goto(e.dataset.page);});
+document.querySelectorAll(".nav-item[data-page], .nav-subitem").forEach(e=>{e.onclick=()=>goto(e.dataset.page);});
+$("settingsToggle").onclick=()=>{
+  const submenu=$("settingsSubmenu");
+  const willOpen=submenu.classList.contains("hidden");
+  setSettingsMenu(willOpen);
+};
 
 // ── Load ──────────────────────────────────────────────────────────────
 async function loadAll(){
@@ -148,6 +395,14 @@ async function loadAll(){
   S.confFiles=S.includeFiles.filter(cf=>!cf.managed);
   $("statusLabel").textContent=`已连接 — ${d.config_file}`;
   fillBasic(d.beginner); fillExtras(); renderAll(); refreshGroupSelects(); populateRoutingDropdowns();
+  loadUiSettings();
+  loadVersionInfo();
+  if(S.page==="dashboard")loadDashboard().catch(showPageError("dashboardMetrics"));
+  if(S.page==="querylog")loadQueryLog().catch(showPageError("queryLogTable"));
+  if(S.page==="upstreamstats")loadUpstreamStats().catch(showPageError("upstreamStatsTable"));
+  if(S.page==="clients")loadClients().catch(showPageError("clientsTable"));
+  if(S.page==="runtimelog")ensureRuntimeLogStream();
+  if(S.page==="terminal")ensureTerminal();
 }
 
 function fillBasic(b){if(!b)return;
@@ -164,6 +419,7 @@ function fillBasic(b){if(!b)return;
   $("p_serve_expired").checked=!!b.serve_expired;
   $("p_dualstack").checked=!!b.dualstack_ip_selection;
   $("l_log_level").value=b.log_level||"info";
+  if($("runtimeLogLevel"))$("runtimeLogLevel").value=b.log_level||"info";
   $("l_audit_enable").checked=!!b.audit_enable;
 }
 
@@ -172,6 +428,15 @@ function fillExtras(){
   // Extract port from bind-tcp
   const tcpMatch = (e["bind-tcp"]||"").match(/:(\d+)$/);
   $("s_bind_tcp").value=tcpMatch?tcpMatch[1]:"";
+  $("s_bind_tls").value=e["bind-tls"]||"";
+  $("s_bind_https").value=e["bind-https"]||"";
+  $("s_bind_cert_file").value=e["bind-cert-file"]||"";
+  $("s_bind_cert_key_file").value=e["bind-cert-key-file"]||"";
+  $("s_bind_cert_generate").value=e["bind-cert-generate"]||"";
+  $("s_bind_cert_san").value=e["bind-cert-san"]||"";
+  $("s_bind_cert_key_pass").value=e["bind-cert-key-pass"]||"";
+  $("s_bind_cert_root_key_file").value=e["bind-cert-root-key-file"]||"";
+  $("s_bind_cert_validity_days").value=e["bind-cert-validity-days"]||"";
   $("s_user").value=e["user"]||"";
   $("s_socket_buff").value=e["socket-buff-size"]||"";
   $("s_no_daemon").checked=e["no-daemon"]==="yes"||e["no-daemon"]==="";
@@ -213,6 +478,288 @@ function fillExtras(){
   $("a_ddns_domain").value=e["ddns-domain"]||"";
   $("a_local_domain").value=e["local-domain"]||"";
   $("a_dnsmasq_lease").value=e["dnsmasq-lease-file"]||"";
+}
+
+async function loadDashboard(){
+  const [overview,metrics,hourly,daily,topDomains,topClients]=await Promise.all([
+    api("/api/stats/overview"),
+    api("/api/stats/metrics"),
+    api("/api/stats/hourly-query-count?past_hours=24"),
+    api("/api/stats/daily-query-count?past_days=30"),
+    api("/api/stats/top/domain?count=8"),
+    api("/api/stats/top/client?count=8")
+  ]);
+  S.dashboard={overview,metrics,hourly,daily,topDomains:topDomains.domain_top_list||[],topClients:topClients.client_top_list||[]};
+  renderDashboard();
+}
+
+function renderDashboard(){
+  const {overview,metrics,hourly,daily,topDomains,topClients}=S.dashboard;
+  $("dashboardMetrics").innerHTML=[
+    {cls:"metric-green",title:"总查询次数",value:fmtNumber(metrics?.total_query_count),sub:overview?.server_name||"smartdns"},
+    {cls:"metric-orange",title:"被阻止的查询次数",value:fmtNumber(metrics?.block_query_count),sub:`请求丢弃 ${fmtNumber(metrics?.request_drop_count)}`},
+    {cls:"metric-blue",title:"每秒查询次数",value:fmtNumber(metrics?.qps),sub:`失败查询 ${fmtNumber(metrics?.fail_query_count)}`},
+    {cls:"metric-red",title:"缓存命中率",value:fmtPercent(metrics?.cache_hit_rate),sub:`内存 ${fmtBytes(metrics?.memory_usage)}`},
+    {cls:"metric-teal",title:"缓存数量",value:fmtNumber(metrics?.cache_number),sub:fmtBytes(metrics?.cache_memory_size)},
+    {cls:"metric-pink",title:"平均查询时间",value:fmtMs(metrics?.avg_query_time),sub:`数据库 ${fmtBytes(overview?.database_size)}`}
+  ].map(x=>`<div class="metric-card ${x.cls}"><h3>${x.title}</h3><div class="metric-value">${x.value}</div><div class="metric-sub">${x.sub}</div></div>`).join("");
+  $("hourlyChart").innerHTML=createLineChart(hourly?.hourly_query_count||[],"hour","query_count","#4fb54f");
+  $("dailyChart").innerHTML=createLineChart(daily?.daily_query_count||[],"day","query_count","#4f8cff");
+  $("topDomains").innerHTML=renderRankList(topDomains,"domain");
+  $("topClients").innerHTML=renderRankList(topClients,"client_ip");
+}
+
+function renderRankList(items,key){
+  if(!items||!items.length)return `<div class="card empty">暂无数据</div>`;
+  return `<div class="rank-list">${items.map((item,idx)=>`
+    <div class="rank-item">
+      <div class="rank-index">${idx+1}</div>
+      <div class="rank-name">${esc(item[key]||"-")}</div>
+      <div class="rank-value">${fmtNumber(item.query_count)}</div>
+    </div>`).join("")}</div>`;
+}
+
+function queryLogParams(page=S.queryLog.page){
+  const params=new URLSearchParams({page_num:String(page),page_size:String(S.queryLog.pageSize),order:"desc"});
+  const {domain="",client="",group="",blocked=""}=S.queryLog.filters||{};
+  if(domain)params.set("domain",domain);
+  if(client)params.set("client",client);
+  if(group)params.set("domain_group",group);
+  if(blocked!=="")params.set("is_blocked",blocked);
+  return params.toString();
+}
+
+async function loadQueryLog(page=S.queryLog.page){
+  S.queryLog.page=page;
+  const data=await api(`/api/domain?${queryLogParams(page)}`);
+  S.queryLog.items=data.domain_list||[];
+  S.queryLog.totalCount=data.total_count||0;
+  S.queryLog.totalPage=data.total_page||1;
+  renderQueryLog();
+}
+
+function renderQueryLog(){
+  $("queryLogTable").innerHTML=renderTable([
+    {label:"ID",key:"id"},
+    {label:"域名",render:r=>`<span title="${esc(r.domain)}">${esc(r.domain)}</span>`},
+    {label:"类型",render:r=>esc(String(r.domain_type??"-"))},
+    {label:"客户端",key:"client"},
+    {label:"时间",render:r=>fmtDateTime(r.timestamp)},
+    {label:"Ping",render:r=>Number(r.ping_time||0)>0?fmtMs(r.ping_time):"N/A"},
+    {label:"组",key:"domain_group"},
+    {label:"是否阻止",render:r=>`<span class="status-pill ${r.is_blocked?"status-bad":"status-ok"}">${r.is_blocked?"已阻止":"未阻止"}</span>`},
+    {label:"查询时间",render:r=>fmtMs(r.query_time||0)}
+  ],S.queryLog.items,"还没有查询日志。");
+  renderPager("queryLogPager",S.queryLog,(page)=>loadQueryLog(page).catch(showPageError("queryLogTable")));
+}
+
+function clientParams(page=S.clients.page){
+  const params=new URLSearchParams({page_num:String(page),page_size:String(S.clients.pageSize),order:"desc"});
+  const {ip="",hostname="",mac=""}=S.clients.filters||{};
+  if(ip)params.set("client_ip",ip);
+  if(hostname)params.set("hostname",hostname);
+  if(mac)params.set("mac",mac);
+  return params.toString();
+}
+
+async function loadClients(page=S.clients.page){
+  S.clients.page=page;
+  const data=await api(`/api/client?${clientParams(page)}`);
+  S.clients.items=data.client_list||[];
+  S.clients.totalCount=data.total_count||0;
+  S.clients.totalPage=data.total_page||1;
+  renderClientStats();
+}
+
+function renderClientStats(){
+  $("clientsTable").innerHTML=renderTable([
+    {label:"ID",key:"id"},
+    {label:"客户端 IP",key:"client_ip"},
+    {label:"MAC 地址",key:"mac"},
+    {label:"主机名",render:r=>esc(r.hostname||"-")},
+    {label:"最后查询时间",render:r=>fmtDateTime(r.last_query_timestamp)}
+  ],S.clients.items,"还没有客户端数据。");
+  renderPager("clientsPager",S.clients,(page)=>loadClients(page).catch(showPageError("clientsTable")));
+}
+
+async function loadUpstreamStats(){
+  const data=await api("/api/upstream-server");
+  S.upstreamStats=data.upstream_server_list||[];
+  $("upstreamStatsTable").innerHTML=renderTable([
+    {label:"主机",key:"host"},
+    {label:"IP",key:"ip"},
+    {label:"端口",key:"port"},
+    {label:"类型",key:"server_type"},
+    {label:"总查询",render:r=>fmtNumber(r.total_query_count)},
+    {label:"成功率",render:r=>fmtPercent(r.query_success_rate)},
+    {label:"平均耗时",render:r=>fmtMs(r.avg_time)},
+    {label:"状态",render:r=>`<span class="status-pill ${String(r.status||"").toLowerCase()==="normal"?"status-ok":"status-neutral"}">${esc(r.status||"-")}</span>`},
+    {label:"安全",render:r=>esc(r.security||"-")}
+  ],S.upstreamStats,"还没有上游统计数据。");
+}
+
+function runtimeLogWsUrl(){
+  const proto=location.protocol==="https:"?"wss":"ws";
+  return `${proto}://${location.host}/${S.runtimeLog.kind==="audit"?"api/log/audit/stream":"api/log/stream"}`;
+}
+
+function syncRuntimeLogUi(){
+  const isAudit=S.runtimeLog.kind==="audit";
+  if($("runtimeLogHeading"))$("runtimeLogHeading").textContent=isAudit?"审计日志":"运行日志";
+  if($("runtimeLogSource"))$("runtimeLogSource").value=S.runtimeLog.kind;
+  if($("runtimeLogLevel"))$("runtimeLogLevel").classList.toggle("hidden",isAudit);
+  if(S.page==="runtimelog"){
+    $("pageTitle").textContent=isAudit?"审计日志":"运行日志";
+    $("pageDesc").textContent=isAudit?"实时 SmartDNS 审计日志流":"实时 smartdns 运行日志流";
+  }
+}
+
+function appendRuntimeLog(text, level){
+  const line=(text||"").trimEnd();
+  if(!line)return;
+  S.runtimeLog.lines.push({text:line,level:level||0});
+  if(S.runtimeLog.lines.length>800)S.runtimeLog.lines=S.runtimeLog.lines.slice(-800);
+  const view=$("runtimeLogView");
+  if(!view)return;
+  view.textContent=S.runtimeLog.lines.map(x=>x.text).join("\n");
+  view.scrollTop=view.scrollHeight;
+}
+
+function closeRuntimeLogSocket(){
+  if(S.runtimeLog.socket){
+    try{S.runtimeLog.socket.close();}catch(_){}
+    S.runtimeLog.socket=null;
+  }
+  S.runtimeLog.connected=false;
+}
+
+function closeTerminalSocket(){
+  if(S.terminal.socket){
+    try{S.terminal.socket.close();}catch(_){}
+    S.terminal.socket=null;
+  }
+  S.terminal.connected=false;
+  if($("terminalStatus"))$("terminalStatus").textContent="未连接";
+}
+
+function initTerminalInstance(){
+  if(S.terminal.term)return S.terminal.term;
+  const host=$("terminalView");
+  if(!host)return null;
+  host.innerHTML="";
+  if(typeof window.Terminal!=="function"){
+    host.innerHTML=`<div class="card empty">终端组件加载失败，请检查网络或 CDN 访问。</div>`;
+    return null;
+  }
+  const term=new window.Terminal({
+    cursorBlink:true,
+    fontFamily:'JetBrains Mono, Fira Code, Consolas, monospace',
+    fontSize:13,
+    theme:{background:'#0d1117',foreground:'#c9d1d9',cursor:'#58a6ff',selection:'#264f78'},
+    convertEol:true,
+    scrollback:2000
+  });
+  term.open(host);
+  term.onData(data=>{
+    if(S.terminal.socket&&S.terminal.connected)S.terminal.socket.send(data);
+  });
+  S.terminal.term=term;
+  return term;
+}
+
+function sendTerminalResize(){
+  const term=S.terminal.term;
+  if(!term||!S.terminal.socket||!S.terminal.connected)return;
+  const cols=term.cols||80, rows=term.rows||24;
+  const buf=new Uint8Array(5);
+  buf[0]=2;
+  buf[1]=(cols>>8)&0xff;
+  buf[2]=cols&0xff;
+  buf[3]=(rows>>8)&0xff;
+  buf[4]=rows&0xff;
+  S.terminal.socket.send(buf);
+}
+
+function ensureTerminal(force=false){
+  if(S.page!=="terminal")return;
+  const term=initTerminalInstance();
+  if(!term)return;
+  if(!terminalEnabled()){
+    term.clear();
+    term.writeln("Terminal is disabled.");
+    term.writeln("请在插件配置中启用 smartdns-plus-ui.enable-terminal，然后重启服务。");
+    $("terminalStatus").textContent="未启用";
+    return;
+  }
+  if(force){
+    term.clear();
+    closeTerminalSocket();
+  }
+  if(S.terminal.socket&&S.terminal.connected)return;
+  $("terminalStatus").textContent="连接中...";
+  const ws=new WebSocket(termWsUrl());
+  ws.binaryType="arraybuffer";
+  ws.onopen=()=>{
+    S.terminal.socket=ws;
+    S.terminal.connected=true;
+    $("terminalStatus").textContent="已连接";
+    term.focus();
+    sendTerminalResize();
+  };
+  ws.onmessage=(ev)=>{
+    if(typeof ev.data==="string"){term.write(ev.data);return;}
+    const buf=new Uint8Array(ev.data);
+    if(!buf.length)return;
+    const msgType=buf[0];
+    const text=new TextDecoder().decode(buf.slice(1));
+    if(msgType===0){
+      term.write(text);
+    }else if(msgType===1){
+      term.writeln(`\r\n[terminal error] ${text}`);
+      $("terminalStatus").textContent="错误";
+    }
+  };
+  ws.onclose=()=>{
+    S.terminal.connected=false;
+    S.terminal.socket=null;
+    $("terminalStatus").textContent="已断开";
+  };
+  ws.onerror=()=>{$("terminalStatus").textContent="连接失败";};
+}
+
+function ensureRuntimeLogStream(force=false){
+  if(S.page!=="runtimelog")return;
+  syncRuntimeLogUi();
+  if(force)closeRuntimeLogSocket();
+  if(S.runtimeLog.socket&&S.runtimeLog.connected)return;
+  const view=$("runtimeLogView");
+  if(view&&!S.runtimeLog.lines.length)view.textContent=`正在连接${S.runtimeLog.kind==="audit"?"审计":"运行"}日志流...`;
+  const ws=new WebSocket(runtimeLogWsUrl());
+  ws.binaryType="arraybuffer";
+  ws.onopen=()=>{
+    S.runtimeLog.socket=ws;
+    S.runtimeLog.connected=true;
+    if(view&&!S.runtimeLog.lines.length)view.textContent=`已连接${S.runtimeLog.kind==="audit"?"审计":"运行"}日志流。\n`;
+    if(S.runtimeLog.kind==="runtime"&&$("runtimeLogLevel"))ws.send(new Uint8Array([1,3,...new TextEncoder().encode($("runtimeLogLevel").value),0]));
+  };
+  ws.onmessage=(ev)=>{
+    if(typeof ev.data==="string"){appendRuntimeLog(ev.data,0);return;}
+    const buf=new Uint8Array(ev.data);
+    if(!buf.length)return;
+    if(buf[0]===0){
+      const offset=S.runtimeLog.kind==="audit"?1:(buf.length>1?2:1);
+      const level=S.runtimeLog.kind==="audit"?0:(buf.length>1?buf[1]:0);
+      appendRuntimeLog(new TextDecoder().decode(buf.slice(offset)), level);
+    }
+  };
+  ws.onclose=()=>{
+    S.runtimeLog.connected=false;
+    S.runtimeLog.socket=null;
+    if(S.page==="runtimelog"&&!S.runtimeLog.paused){
+      setTimeout(()=>ensureRuntimeLogStream(),1200);
+    }
+  };
+  ws.onerror=()=>{};
 }
 
 function matchLine(t,k){if(!t)return"";for(const l of t.split("\n")){const x=l.trim();if(x.startsWith(k+" ")||x.startsWith(k+"\t"))return x.substring(k.length).trim();}return"";}
@@ -327,8 +874,10 @@ function upCard(u,allGroups){
   const opts=parseUpOpts(u.options||"");
 
   // Build group options for select
+  const noneSel=`<option value="__ungrouped__" ${!saved.group?'selected':''}>默认组（未分组）</option>`;
   const gOpts=allGroups.map(g=>`<option value="${esc(g)}" ${saved.group===g?'selected':''}>${esc(g)}</option>`).join("");
   const otherSel=saved.group&&!allGroups.includes(saved.group)?`<option value="${esc(saved.group)}" selected>${esc(saved.group)}</option>`:"";
+  const newGroupSel=`<option value="_new_">（新建分组）</option>`;
   // Proxy select options
   const pxyNames=getProxyNames();
   const pxyOpts=pxyNames.map(p=>`<option value="${esc(p)}" ${saved.proxy_name===p?'selected':''}>${esc(p)}</option>`).join("");
@@ -341,7 +890,7 @@ function upCard(u,allGroups){
         <strong>${esc(u.value||"")}</strong>
         <span class="dim">${esc(gs||"默认组")}</span>
         ${u.fallback?'<span class="bd w">fallback</span>':''}
-        ${u.proxy_name?`<span class="bd">proxy:${esc(u.proxy_name)}</span>`:''}
+        ${u.proxy_name?`<span class="bd">${esc(u.proxy_name)}</span>`:''}
         ${u.host_ip?`<span class="dim">→ ${esc(u.host_ip)}</span>`:''}
       </div>
       <div class="up-acts">
@@ -353,7 +902,7 @@ function upCard(u,allGroups){
       <div class="fg fg4">
         <div class="field"><label>协议</label><select class="ue-kind">${Object.entries(KINDS).map(([k,v])=>`<option value="${k}" ${saved.kind===k?'selected':''}>${v}</option>`).join("")}</select></div>
         <div class="field s2"><label>地址</label><input class="ue-value" value="${esc(saved.value)}"></div>
-        <div class="field"><label>分组</label><select class="ue-groups">${otherSel}${gOpts}<option value="">（新建分组）</option></select><input class="ue-group-new hidden" placeholder="输入新分组名" style="margin-top:4px"></div>
+        <div class="field"><label>分组</label><select class="ue-groups">${noneSel}${otherSel}${gOpts}${newGroupSel}</select><input class="ue-group-new hidden" placeholder="输入新分组名" style="margin-top:4px"></div>
         <div class="field"><label>代理</label><select class="ue-proxy"><option value="" ${!saved.proxy_name?'selected':''}>不使用代理</option>${pxyOpts}${pxyOther}</select></div>
         <div class="field"><label>Bootstrap DNS</label><input class="ue-bootstrap" value="${esc(saved.bootstrap_dns)}"></div>
         <div class="field"><label>Host IP</label><input class="ue-hostip" value="${esc(saved.host_ip)}"></div>
@@ -381,22 +930,28 @@ function upCard(u,allGroups){
   const gsSelect=card.querySelector(".ue-groups");
   const gsNew=card.querySelector(".ue-group-new");
   gsSelect.addEventListener("change",()=>{
-    if(gsSelect.value===""){gsNew.classList.remove("hidden");gsNew.focus();}
+    if(gsSelect.value==="_new_"){gsNew.classList.remove("hidden");gsNew.focus();}
     else gsNew.classList.add("hidden");
   });
 
   card.querySelector(".up-edit-btn").onclick=()=>{card.querySelector(".up-edit").classList.toggle("hidden");};
   card.querySelector(".up-save-btn").onclick=()=>saveUpEdit(u._idx,card);
   card.querySelector(".up-cancel-btn").onclick=()=>{card.querySelector(".up-edit").classList.add("hidden");};
-  card.querySelector(".up-del").onclick=()=>{S.upstreams.splice(u._idx,1);renderUpstreams();autoSave();};
+  card.querySelector(".up-del").onclick=async()=>{
+    S.upstreams.splice(u._idx,1);
+    renderUpstreams();
+    await autoSave(true);
+  };
   return card;
 }
 
-function saveUpEdit(idx,card){
+async function saveUpEdit(idx,card){
   const e=card.querySelector(".up-edit");
   const gsSelect=e.querySelector(".ue-groups");
   let group=gsSelect.value;
-  if(group===""){
+  if(group==="__ungrouped__"){
+    group="";
+  }else if(group==="_new_"){
     // New group entered
     group=e.querySelector(".ue-group-new").value.trim();
   }
@@ -425,10 +980,11 @@ function saveUpEdit(idx,card){
       ].filter(Boolean).join(" "),
     note:e.querySelector(".ue-note").value.trim(),
   };
-  renderUpstreams();autoSave();
+  renderUpstreams();
+  await autoSave(true);
 }
 
-function addUpstream(){
+async function addUpstream(){
   const gsSel=$("upGroupsSelect");
   let group=gsSel?gsSel.value:"";
   if(group==="_new_")group=$("upGroupNew").value.trim();
@@ -455,7 +1011,8 @@ function addUpstream(){
   ["upValue","upProxy","upBootstrap","upHostIp","upSubnet","upHttpHost","upTlsSni","upSpkiPin","upInterface","upSetMark","upBlacklistIp","upWhitelistIp","upTcpKa","upNote"].forEach(id=>$(id).value="");
   if($("upGroupNew"))$("upGroupNew").value="";
   $("upExcludeDefault").checked=false;$("upFallback").checked=false;$("upTlsHostVerify").checked=false;$("upNoCheckCert").checked=false;
-  renderUpstreams();autoSave();refreshGroupSelects();
+  renderUpstreams();refreshGroupSelects();
+  await autoSave(true);
 }
 
 function refreshGroupSelects(){
@@ -560,7 +1117,7 @@ function renderSets(){
   if(!all.length){box.innerHTML=`<div class="card empty">还没有集合。在上方新增。</div>`;return;}
   all.forEach((s,i)=>{
     const d=document.createElement("div");d.className="card rc";
-    d.innerHTML=`<div class="rm"><span class="bd">${s.type==="domain-set"?"域名集合":"IP 集合"}</span> <strong>${esc(s.name)}</strong> <code>${esc(s.file||"")}</code></div><button class="ghost set-del" data-idx="${i}">删除</button>`;
+    d.innerHTML=`<div class="rm"><span class="bd">${s.type==="domain-set"?"域名集合":"IP 集合"}</span> <strong>${renderSetName(s.name)}</strong> <code>${esc(s.file||"")}</code></div><button class="ghost set-del" data-idx="${i}">删除</button>`;
     d.querySelector(".set-del").onclick=()=>{all.splice(i,1);syncSets(all);};
     box.appendChild(d);
   });
@@ -593,7 +1150,7 @@ function describeRouting(r){
   }
   if(r.rule_type==="domain-rules"){
     const ds=t.match(/domain-set:(\w+)/);
-    const prefix=ds?`域名集合 <b>${ds[1]}</b>`:`<b>${t.replace(/^\//,"").replace(/\/$/,"")}</b>`;
+    const prefix=ds?`域名集合 ${renderSetName(ds[1])}`:`<b>${t.replace(/^\//,"").replace(/\/$/,"")}</b>`;
     const labels=[];
     if(v.includes("-no-cache"))labels.push("不缓存");
     if(v.includes("-no-serve-expired"))labels.push("不兜底过期");
@@ -607,7 +1164,7 @@ function describeRouting(r){
   }
   if(r.rule_type==="address"){
     const ds=t.match(/domain-set:(\w+)/);
-    const prefix=ds?`域名集合 <b>${ds[1]}</b>`:`<b>${t.replace(/^\//,"")}</b>`;
+    const prefix=ds?`域名集合 ${renderSetName(ds[1])}`:`<b>${t.replace(/^\//,"")}</b>`;
     if(v==="#"||v==="#4"||v==="#6")return `${prefix} 屏蔽（返回空地址）`;
     if(v.startsWith("#"))return `${prefix} 屏蔽（${v}）`;
     return `${prefix} 固定返回 <b>${v||"空"}</b>`;
@@ -843,7 +1400,7 @@ function renderAddrCname(){
     const d=document.createElement("div");d.className="card rc";
     const label=r.rule_type==="address"?"address":"cname";
     const ds=r.target.match(/domain-set:(\w+)/);
-    const prefix=ds?`集合 <b>${ds[1]}</b>`:`<b>${r.target.replace(/^\//,"").replace(/\/$/,"")}</b>`;
+    const prefix=ds?`集合 ${renderSetName(ds[1])}`:`<b>${r.target.replace(/^\//,"").replace(/\/$/,"")}</b>`;
     const v=r.value||"";
     const desc=r.rule_type==="address"?(v==="#"?"屏蔽":`返回 ${v}`):`别名→ ${v}`;
     d.innerHTML=`<div class="rm"><span class="bd">${esc(label)}</span> ${prefix}：${esc(desc)}</div><button class="ghost ac-del">删除</button>`;
@@ -857,7 +1414,7 @@ function syncAddrCname(items){
 }
 function addAddrCname(){
   const type=$("acType").value, tt=$("acTargetType").value;let target,label;
-  if(tt==="domain-set"){const n=$("acTargetDS").value;if(!n){alert("请选择域名集合");return;}target="/domain-set:"+n;label=`集合 <b>${n}</b>`;}
+  if(tt==="domain-set"){const n=$("acTargetDS").value;if(!n){alert("请选择域名集合");return;}target="/domain-set:"+n;label=`集合 ${renderSetName(n)}`;}
   else{let raw=$("acTargetInput").value.trim();if(!raw){alert("请输入目标");return;}target="/"+raw.replace(/^\//,"")+"/";label=`<b>${raw}</b>`;}
   const val=$("acValInput").value.trim();
   S.managed.routing_items=S.managed.routing_items||[];
@@ -877,7 +1434,7 @@ function renderDomainRules(){
   items.forEach((r)=>{
     const d=document.createElement("div");d.className="card rc";
     const ds=r.target.match(/domain-set:(\w+)/);
-    const prefix=ds?`集合 <b>${ds[1]}</b>`:`<b>${r.target.replace(/^\//,"").replace(/\/$/,"")}</b>`;
+    const prefix=ds?`集合 ${renderSetName(ds[1])}`:`<b>${r.target.replace(/^\//,"").replace(/\/$/,"")}</b>`;
     const labels=[];
     const v=r.value||"";
     if(v.includes("-no-cache"))labels.push("不缓存");
@@ -938,8 +1495,8 @@ function addDomainRule(){
 
 
 // -- Clients --
-function renderClients(){const b=$("clientList");b.innerHTML="";const it=S.managed.client_rules||[];if(!it.length){b.innerHTML=`<div class="card empty">还没有客户端规则。</div>`;return;}it.forEach((x,i)=>{const d=document.createElement("div");d.className="card rc";d.innerHTML=`<div class="rm"><span class="bd">client</span> <strong>${esc(x.matcher)}</strong> <span class="dim">规则组: ${esc(x.group_name||"全局")}</span></div><button class="ghost del-cl" data-idx="${i}">删除</button>`;b.appendChild(d);});document.querySelectorAll(".del-cl").forEach(b=>{b.onclick=()=>{S.managed.client_rules.splice(parseInt(b.dataset.idx),1);renderClients();autoSave();};});}
-function addClient(){const m=$("clMatcher").value.trim();if(!m){alert("客户端标识不能为空");return;}S.managed.client_rules.push({matcher:m,group_name:$("clGroup").value.trim()});$("clMatcher").value="";$("clGroup").value="";renderClients();autoSave();}
+function renderClientRules(){const b=$("clientList");if(!b)return;b.innerHTML="";const it=S.managed.client_rules||[];if(!it.length){b.innerHTML=`<div class="card empty">还没有客户端规则。</div>`;return;}it.forEach((x,i)=>{const d=document.createElement("div");d.className="card rc";d.innerHTML=`<div class="rm"><span class="bd">client</span> <strong>${esc(x.matcher)}</strong> <span class="dim">规则组: ${esc(x.group_name||"全局")}</span></div><button class="ghost del-cl" data-idx="${i}">删除</button>`;b.appendChild(d);});document.querySelectorAll(".del-cl").forEach(b=>{b.onclick=()=>{S.managed.client_rules.splice(parseInt(b.dataset.idx),1);renderClientRules();autoSave();};});}
+function addClientRule(){const m=$("clMatcher").value.trim();if(!m){alert("客户端标识不能为空");return;}S.managed.client_rules.push({matcher:m,group_name:$("clGroup").value.trim()});$("clMatcher").value="";$("clGroup").value="";renderClientRules();autoSave();}
 
 // -- IP Rules --
 function renderIpRules(){const b=$("ipRuleList");b.innerHTML="";const it=S.managed.ip_rules||[];if(!it.length){b.innerHTML=`<div class="card empty">还没有 IP 规则。</div>`;return;}const lb={"ignore-ip":"忽略IP","whitelist-ip":"白名单","blacklist-ip":"黑名单","bogus-nxdomain":"假NX","ip-alias":"IP别名","ip-rules":"IP规则"};it.forEach((x,i)=>{const d=document.createElement("div");d.className="card rc";d.innerHTML=`<div class="rm"><span class="bd">${esc(lb[x.rule_type]||x.rule_type)}</span> <strong>${esc(x.target)}</strong>${x.options?` <code>${esc(x.options)}</code>`:''}</div><button class="ghost del-ir" data-idx="${i}">删除</button>`;b.appendChild(d);});document.querySelectorAll(".del-ir").forEach(b=>{b.onclick=()=>{S.managed.ip_rules.splice(parseInt(b.dataset.idx),1);renderIpRules();autoSave();};});}
@@ -984,9 +1541,18 @@ function addConfFile(){
 function collectExtras(){
   const e={};
   function kv(k,v){if(v&&v.trim())e[k]=v.trim();}
+  function km(k,v){
+    const text=(v||"").split("\n").map(x=>x.trim()).filter(Boolean).join("\n");
+    if(text)e[k]=text;
+  }
   function kp(k,v){if(v&&v.trim())e[k]=`[::]:${v.trim()}`;}
   function cb(k,c){if(c)e[k]="yes";}
   kp("bind-tcp",$("s_bind_tcp").value);kv("user",$("s_user").value);kv("socket-buff-size",$("s_socket_buff").value);
+  km("bind-tls",$("s_bind_tls").value);km("bind-https",$("s_bind_https").value);
+  kv("bind-cert-file",$("s_bind_cert_file").value);kv("bind-cert-key-file",$("s_bind_cert_key_file").value);
+  kv("bind-cert-generate",$("s_bind_cert_generate").value);kv("bind-cert-san",$("s_bind_cert_san").value);
+  kv("bind-cert-key-pass",$("s_bind_cert_key_pass").value);kv("bind-cert-root-key-file",$("s_bind_cert_root_key_file").value);
+  kv("bind-cert-validity-days",$("s_bind_cert_validity_days").value);
   cb("no-daemon",$("s_no_daemon").checked);cb("restart-on-crash",$("s_restart_on_crash").checked);cb("expand-ptr-from-address",$("s_expand_ptr").checked);
   kv("rr-ttl-min",$("p_rr_ttl_min").value);kv("rr-ttl-max",$("p_rr_ttl_max").value);kv("rr-ttl-reply-max",$("p_rr_ttl_reply_max").value);
   kv("local-ttl",$("p_local_ttl").value);kv("max-reply-ip-num",$("p_max_reply_ip").value);kv("max-query-limit",$("p_max_query_limit").value);
@@ -1066,12 +1632,20 @@ function buildManagedText(){
 }
 
 let _saveTimer=null;
-function autoSave(){
+async function doSave(){
+  const p={beginner:collectBasic(),rules_text:buildManagedText()};
+  await api("/api/plus/save",{method:"POST",body:JSON.stringify(p)});
+}
+
+function autoSave(immediate=false){
   clearTimeout(_saveTimer);
+  if(immediate){
+    return doSave();
+  }
   _saveTimer=setTimeout(async()=>{
-    const p={beginner:collectBasic(),rules_text:buildManagedText()};
-    await api("/api/plus/save",{method:"POST",body:JSON.stringify(p)});
+    await doSave();
   },200);
+  return Promise.resolve();
 }
 
 function sleep(ms){
@@ -1106,6 +1680,23 @@ async function applyAndRestart(){
   }
 }
 
+async function changeAdminPassword(){
+  const oldPassword=$("admOldPassword").value;
+  const newPassword=$("admNewPassword").value;
+  const confirmPassword=$("admConfirmPassword").value;
+  if(!oldPassword){alert("请输入当前密码");return;}
+  if(!newPassword){alert("请输入新密码");return;}
+  if(newPassword.length<8){alert("新密码至少需要 8 位");return;}
+  if(newPassword!==confirmPassword){alert("两次输入的新密码不一致");return;}
+  await api("/api/auth/password",{
+    method:"PUT",
+    body:JSON.stringify({old_password:oldPassword,password:newPassword})
+  });
+  clearPasswordChangeForm();
+  alert("密码已修改，请重新登录。");
+  await logout();
+}
+
 // ── Preview ──────────────────────────────────────────────────────────
 async function renderPreview(){
   const d=await api("/api/plus/config");
@@ -1117,7 +1708,9 @@ $("loginBtn").onclick=()=>login().catch(e=>alert("登录失败: "+e.message));
 $("logoutBtn").onclick=()=>logout();
 $("password").addEventListener("keydown",e=>{if(e.key==="Enter")login().catch(err=>alert("登录失败: "+err.message));});
 $("reloadBtn").onclick=()=>loadAll().catch(e=>alert("刷新失败: "+e.message));
+$("themeBtn").onclick=()=>toggleTheme();
 $("saveRestartBtn").onclick=()=>applyAndRestart().catch(e=>alert("重启失败: "+e.message));
+$("changePasswordBtn").onclick=()=>changeAdminPassword().catch(e=>alert("修改密码失败: "+e.message));
 $("addUpstreamModalBtn").onclick=()=>{$("upModal").classList.remove("hidden");refreshGroupSelects();};
 $("upModalClose").onclick=()=>$("upModal").classList.add("hidden");
 $("upModalCancel").onclick=()=>$("upModal").classList.add("hidden");
@@ -1129,7 +1722,41 @@ $("addDomainRuleBtn").onclick=()=>addDomainRule();
 $("addAddrCnameBtn").onclick=()=>addAddrCname();
 $("addIpRuleBtn").onclick=()=>addIpRule();
 $("addConfFileBtn").onclick=()=>addConfFile();
+$("qlSearchBtn").onclick=()=>{S.queryLog.filters={domain:$("qlDomain").value.trim(),client:$("qlClient").value.trim(),group:$("qlGroup").value.trim(),blocked:$("qlBlocked").value};loadQueryLog(1).catch(showPageError("queryLogTable"));};
+$("qlResetBtn").onclick=()=>{$("qlDomain").value="";$("qlClient").value="";$("qlGroup").value="";$("qlBlocked").value="";S.queryLog.filters={};loadQueryLog(1).catch(showPageError("queryLogTable"));};
+$("clSearchBtn").onclick=()=>{S.clients.filters={ip:$("clIp").value.trim(),hostname:$("clHostname").value.trim(),mac:$("clMac").value.trim()};loadClients(1).catch(showPageError("clientsTable"));};
+$("clResetBtn").onclick=()=>{$("clIp").value="";$("clHostname").value="";$("clMac").value="";S.clients.filters={};loadClients(1).catch(showPageError("clientsTable"));};
+$("refreshUpstreamStatsBtn").onclick=()=>loadUpstreamStats().catch(showPageError("upstreamStatsTable"));
+$("runtimeLogClearBtn").onclick=()=>{S.runtimeLog.lines=[];$("runtimeLogView").textContent="";};
+$("runtimeLogPauseBtn").onclick=()=>{
+  S.runtimeLog.paused=!S.runtimeLog.paused;
+  $("runtimeLogPauseBtn").textContent=S.runtimeLog.paused?"继续":"暂停";
+  if(S.runtimeLog.socket&&S.runtimeLog.connected){
+    S.runtimeLog.socket.send(new Uint8Array([1,S.runtimeLog.paused?1:2]));
+  }
+};
+$("runtimeLogReconnectBtn").onclick=()=>ensureRuntimeLogStream(true);
+$("runtimeLogSource").onchange=()=>{
+  S.runtimeLog.kind=$("runtimeLogSource").value==="audit"?"audit":"runtime";
+  S.runtimeLog.lines=[];
+  $("runtimeLogView").textContent="";
+  syncRuntimeLogUi();
+  ensureRuntimeLogStream(true);
+};
+$("terminalClearBtn").onclick=()=>{if(S.terminal.term)S.terminal.term.clear();};
+$("terminalReconnectBtn").onclick=()=>ensureTerminal(true);
+$("runtimeLogLevel").onchange=()=>{
+  if(S.runtimeLog.socket&&S.runtimeLog.connected){
+    $("runtimeLogLevel") && S.runtimeLog.socket.send(new Uint8Array([1,3,...new TextEncoder().encode($("runtimeLogLevel").value),0]));
+  }
+};
+window.addEventListener("resize",()=>sendTerminalResize());
+["admOldPassword","admNewPassword","admConfirmPassword"].forEach(id=>{
+  $(id).addEventListener("keydown",e=>{if(e.key==="Enter")changeAdminPassword().catch(err=>alert("修改密码失败: "+err.message));});
+});
 
 // ── Init ───────────────────────────────────────────────────────────────
 window.onerror=function(msg,url,line){alert("JS错误 行"+line+": "+msg);return false;};
-goto("service");checkAuth();
+applyTheme(getSavedTheme());
+syncRuntimeLogUi();
+goto("dashboard");checkAuth();

@@ -1,0 +1,4 @@
+# Local PTR / local service related domains
+lan
+local
+

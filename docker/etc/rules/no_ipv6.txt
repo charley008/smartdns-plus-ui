@@ -1,0 +1,4 @@
+# Domains that should return no IPv6 answers
+ipv6.google.com
+ipv6.facebook.com
+

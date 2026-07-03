@@ -42,6 +42,7 @@ use std::sync::Arc;
 use url::form_urlencoded;
 
 const PASSWORD_CONFIG_KEY: &str = "smartdns-plus-ui.password";
+const JWT_SECRET_CONFIG_KEY: &str = "smartdns-plus-ui.jwt-secret";
 const REST_API_PATH: &str = "/api";
 
 type APIRouteFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -96,7 +97,7 @@ impl API {
         api.register(Method::POST, "/api/plus/apply", true, APIRoute!(API::api_plus_apply));
         api.register(Method::GET, "/api/plus/ip-sets/{name}", true, APIRoute!(API::api_plus_ip_set_get));
         api.register(Method::POST, "/api/plus/ip-sets/{name}", true, APIRoute!(API::api_plus_ip_set_save));
-        api.register(Method::PUT, "/api/auth/password",  false, APIRoute!(API::api_auth_change_password));
+        api.register(Method::PUT, "/api/auth/password",  true, APIRoute!(API::api_auth_change_password));
         api.register(Method::POST, "/api/auth/refresh",  true, APIRoute!(API::api_auth_refresh));
         api.register(Method::GET, "/api/domain",  true, APIRoute!(API::api_domain_get_list));
         api.register(Method::DELETE, "/api/domain",  true, APIRoute!(API::api_domain_delete_list));
@@ -263,7 +264,7 @@ impl API {
         let conf = this.get_conf();
         let jtw = Jwt::new(
             &conf.username.as_str(),
-            conf.password.as_str(),
+            conf.jwt_secret.as_str(),
             "",
             conf.token_expired_time,
         );
@@ -345,7 +346,7 @@ impl API {
 
         let jtw = Jwt::new(
             userinfo.username.as_str(),
-            conf.password.as_str(),
+            conf.jwt_secret.as_str(),
             "",
             conf.token_expired_time,
         );
@@ -432,7 +433,8 @@ impl API {
         let whole_body = String::from_utf8(req.into_body().collect().await?.to_bytes().into())?;
         let save_req: config_ui::SaveConfigRequest = serde_json::from_str(&whole_body)
             .map_err(|e| HttpError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
-        let validation = config_ui::save_beginner_config(&conf.config_file, &conf.rules_dir, &save_req)?;
+        let validation =
+            config_ui::save_beginner_config(&conf.config_file, &conf.rules_dir, &save_req)?;
         let body = json!({
             "saved": validation.ok,
             "validation": validation,
@@ -450,7 +452,8 @@ impl API {
         let whole_body = String::from_utf8(req.into_body().collect().await?.to_bytes().into())?;
         let save_req: config_ui::SaveConfigRequest = serde_json::from_str(&whole_body)
             .map_err(|e| HttpError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
-        let validation = config_ui::save_beginner_config(&conf.config_file, &conf.rules_dir, &save_req)?;
+        let validation =
+            config_ui::save_beginner_config(&conf.config_file, &conf.rules_dir, &save_req)?;
         let status = if validation.ok {
             Plugin::smartdns_restart();
             "restart_requested"
@@ -525,9 +528,9 @@ impl API {
         req: Request<body::Incoming>,
     ) -> Result<Response<Full<Bytes>>, HttpError> {
         let conf = this.get_conf();
-        let name = param
-            .get("name")
-            .ok_or_else(|| HttpError::new(StatusCode::BAD_REQUEST, "missing rule set name".to_string()))?;
+        let name = param.get("name").ok_or_else(|| {
+            HttpError::new(StatusCode::BAD_REQUEST, "missing rule set name".to_string())
+        })?;
         let params = API::get_params(&req);
         let query = params.get("query").map(|value| value.as_str());
         let offset = API::params_get_value_default(&params, "offset", 0usize)?;
@@ -552,20 +555,21 @@ impl API {
         req: Request<body::Incoming>,
     ) -> Result<Response<Full<Bytes>>, HttpError> {
         let conf = this.get_conf();
-        let name = param
-            .get("name")
-            .ok_or_else(|| HttpError::new(StatusCode::BAD_REQUEST, "missing rule set name".to_string()))?;
+        let name = param.get("name").ok_or_else(|| {
+            HttpError::new(StatusCode::BAD_REQUEST, "missing rule set name".to_string())
+        })?;
         let whole_body = String::from_utf8(req.into_body().collect().await?.to_bytes().into())?;
         let payload: config_ui::SaveRuleSetFileRequest = serde_json::from_str(&whole_body)
             .map_err(|e| HttpError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
-        let detail = config_ui::save_rule_set_file(&conf.config_file, name, &payload).map_err(|e| {
-            let status = match e.kind() {
-                std::io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
-                std::io::ErrorKind::InvalidInput => StatusCode::BAD_REQUEST,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
-            };
-            HttpError::new(status, e.to_string())
-        })?;
+        let detail =
+            config_ui::save_rule_set_file(&conf.config_file, name, &payload).map_err(|e| {
+                let status = match e.kind() {
+                    std::io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
+                    std::io::ErrorKind::InvalidInput => StatusCode::BAD_REQUEST,
+                    _ => StatusCode::INTERNAL_SERVER_ERROR,
+                };
+                HttpError::new(status, e.to_string())
+            })?;
 
         API::response_build(
             StatusCode::OK,
@@ -608,8 +612,7 @@ impl API {
         req: Request<body::Incoming>,
     ) -> Result<Response<Full<Bytes>>, HttpError> {
         let conf = this.get_conf();
-        let whole_body =
-            String::from_utf8(req.into_body().collect().await?.to_bytes().into())?;
+        let whole_body = String::from_utf8(req.into_body().collect().await?.to_bytes().into())?;
         let save_req: config_ui::SaveManagedAssetsRequest = serde_json::from_str(&whole_body)
             .map_err(|e| HttpError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
         let validation =
@@ -639,9 +642,7 @@ impl API {
         let limit = API::params_get_value_default(&params, "limit", 200usize)?;
         let detail =
             config_ui::read_ip_set_detail(&conf.config_file, name, query, offset, limit)
-                .map_err(|e| {
-                    HttpError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-                })?;
+                .map_err(|e| HttpError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
         let Some(detail) = detail else {
             return API::response_error(StatusCode::NOT_FOUND, "IP set not found.");
@@ -663,12 +664,11 @@ impl API {
         let name = param.get("name").ok_or_else(|| {
             HttpError::new(StatusCode::BAD_REQUEST, "missing ip set name".to_string())
         })?;
-        let whole_body =
-            String::from_utf8(req.into_body().collect().await?.to_bytes().into())?;
+        let whole_body = String::from_utf8(req.into_body().collect().await?.to_bytes().into())?;
         let payload: config_ui::SaveRuleSetFileRequest = serde_json::from_str(&whole_body)
             .map_err(|e| HttpError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
-        let detail = config_ui::save_ip_set_file(&conf.config_file, name, &payload)
-            .map_err(|e| {
+        let detail =
+            config_ui::save_ip_set_file(&conf.config_file, name, &payload).map_err(|e| {
                 let status = match e.kind() {
                     std::io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
                     std::io::ErrorKind::InvalidInput => StatusCode::BAD_REQUEST,
@@ -733,6 +733,12 @@ impl API {
         conf.password = hashed_password.clone();
         let ret = data_server.set_config(PASSWORD_CONFIG_KEY, hashed_password.as_str());
         if let Err(e) = ret {
+            return API::response_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string().as_str());
+        }
+
+        let new_jwt_secret = utils::generate_secret();
+        conf.jwt_secret = new_jwt_secret.clone();
+        if let Err(e) = data_server.set_config(JWT_SECRET_CONFIG_KEY, new_jwt_secret.as_str()) {
             return API::response_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string().as_str());
         }
 

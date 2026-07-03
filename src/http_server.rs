@@ -18,8 +18,8 @@
 
 extern crate cfg_if;
 
-use crate::data_server::*;
 use crate::config_ui;
+use crate::data_server::*;
 use crate::dns_log;
 use crate::http_api_msg::*;
 use crate::http_jwt::*;
@@ -62,11 +62,13 @@ cfg_if::cfg_if! {
 
 const HTTP_SERVER_DEFAULT_PASSWORD: &str = "password";
 const HTTP_SERVER_DEFAULT_USERNAME: &str = "admin";
+const HTTP_SERVER_DEFAULT_TOKEN_EXPIRED_TIME: u32 = 30 * 24 * 60 * 60;
 const HTTP_SERVER_DEFAULT_WWW_ROOT: &str = "/usr/share/smartdns-plus/wwwroot";
 const HTTP_SERVER_DEFAULT_IPV6: &str = "http://[::]:6081";
 const HTTP_SERVER_DEFAULT_IP: &str = "http://0.0.0.0:6081";
 const HTTP_SERVER_DEFAULT_CONFIG_FILE: &str = "/etc/smartdns/smartdns.conf";
 const HTTP_SERVER_DEFAULT_RULES_DIR: &str = "/etc/smartdns/rules";
+const HTTP_SERVER_JWT_SECRET_KEY: &str = "smartdns-plus-ui.jwt-secret";
 
 #[derive(Clone)]
 pub struct HttpServerConfig {
@@ -74,6 +76,7 @@ pub struct HttpServerConfig {
     pub http_root: String,
     pub username: String,
     pub password: String,
+    pub jwt_secret: String,
     pub token_expired_time: u32,
     pub enable_cors: bool,
     pub enable_terminal: bool,
@@ -82,6 +85,22 @@ pub struct HttpServerConfig {
 }
 
 impl HttpServerConfig {
+    fn get_setting_compat(
+        data_server: &Arc<DataServer>,
+        db_key: &str,
+        plugin_key: &str,
+    ) -> Option<String> {
+        if let Some(value) = data_server.get_config(db_key) {
+            return Some(value);
+        }
+
+        if let Some(value) = data_server.get_config(plugin_key) {
+            return Some(value);
+        }
+
+        data_server.get_server_config_from_file(plugin_key)
+    }
+
     pub fn new() -> Self {
         let host_ip = if utils::is_ipv6_supported() {
             HTTP_SERVER_DEFAULT_IPV6.to_string()
@@ -94,7 +113,8 @@ impl HttpServerConfig {
             http_root: HTTP_SERVER_DEFAULT_WWW_ROOT.to_string(),
             username: HTTP_SERVER_DEFAULT_USERNAME.to_string(),
             password: utils::hash_password(HTTP_SERVER_DEFAULT_PASSWORD, Some(1000)).unwrap(),
-            token_expired_time: 600,
+            jwt_secret: utils::generate_secret(),
+            token_expired_time: HTTP_SERVER_DEFAULT_TOKEN_EXPIRED_TIME,
             enable_cors: false,
             enable_terminal: false,
             config_file: HTTP_SERVER_DEFAULT_CONFIG_FILE.to_string(),
@@ -132,11 +152,32 @@ impl HttpServerConfig {
             }
         }
 
+        if let Some(jwt_secret) = data_server.get_config(HTTP_SERVER_JWT_SECRET_KEY) {
+            self.jwt_secret = jwt_secret;
+        } else if let Some(jwt_secret_from_file) =
+            data_server.get_server_config_from_file(HTTP_SERVER_JWT_SECRET_KEY)
+        {
+            self.jwt_secret = jwt_secret_from_file;
+        } else {
+            // The first load happens before the data DB is opened, so keep an
+            // in-memory secret here and let the later post-init load persist it.
+            self.jwt_secret = utils::generate_secret();
+        }
+
         if let Some(username) = data_server.get_server_config("smartdns-plus-ui.user") {
             self.username = username;
         }
 
-        if let Some(enable_cors) = data_server.get_server_config("smartdns-plus-ui.enable-cors") {
+        self.token_expired_time = utils::parse_value(
+            data_server.get_server_config("smartdns-plus-ui.token-expire"),
+            60,
+            365 * 24 * 60 * 60,
+            HTTP_SERVER_DEFAULT_TOKEN_EXPIRED_TIME,
+        );
+
+        if let Some(enable_cors) =
+            Self::get_setting_compat(&data_server, "enable_cors", "smartdns-plus-ui.enable-cors")
+        {
             if enable_cors.eq_ignore_ascii_case("yes") || enable_cors.eq_ignore_ascii_case("true") {
                 self.enable_cors = true;
             } else {
@@ -144,7 +185,8 @@ impl HttpServerConfig {
             }
         }
 
-        if let Some(enable_terminal) = data_server.get_server_config("smartdns-plus-ui.enable-terminal")
+        if let Some(enable_terminal) =
+            data_server.get_server_config("smartdns-plus-ui.enable-terminal")
         {
             if enable_terminal.eq_ignore_ascii_case("yes")
                 || enable_terminal.eq_ignore_ascii_case("true")
@@ -412,7 +454,11 @@ impl HttpServer {
             "smartdns config file: {}",
             conf_clone.config_file
         );
-        dns_log!(LogLevel::INFO, "smartdns rules dir: {}", conf_clone.rules_dir);
+        dns_log!(
+            LogLevel::INFO,
+            "smartdns rules dir: {}",
+            conf_clone.rules_dir
+        );
         Ok(())
     }
 
@@ -517,7 +563,12 @@ impl HttpServer {
 
         let token = token.unwrap();
         let conf = self.conf.lock().unwrap();
-        let jwt = Jwt::new(&conf.username, &conf.password, "", conf.token_expired_time);
+        let jwt = Jwt::new(
+            &conf.username,
+            &conf.jwt_secret,
+            "",
+            conf.token_expired_time,
+        );
         if !jwt.is_token_valid(token.as_str()) {
             return Ok(false);
         }
@@ -787,9 +838,10 @@ impl HttpServer {
                         .insert("Content-Type", "text/html; charset=utf-8".parse().unwrap());
                     *response.status_mut() = StatusCode::OK;
                 } else if uri_path == "/app.js" {
-                    response
-                        .headers_mut()
-                        .insert("Content-Type", "text/javascript; charset=utf-8".parse().unwrap());
+                    response.headers_mut().insert(
+                        "Content-Type",
+                        "text/javascript; charset=utf-8".parse().unwrap(),
+                    );
                     *response.status_mut() = StatusCode::OK;
                 } else if uri_path == "/style.css" {
                     response

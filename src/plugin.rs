@@ -195,7 +195,7 @@ impl SmartdnsPlugin {
             return;
         }
         *is_start = false;
-        
+
         dns_log!(LogLevel::INFO, "stop smartdns-plus-ui server.");
         self.http_server_ctl.stop_http_server();
         self.data_server_ctl.stop_data_server();

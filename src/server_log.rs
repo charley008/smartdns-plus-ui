@@ -81,7 +81,6 @@ impl ServerLog {
     }
 }
 
-
 #[derive(Clone)]
 pub struct ServerAuditLogMsg {
     pub msg: String,

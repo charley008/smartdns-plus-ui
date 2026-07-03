@@ -103,7 +103,13 @@ fn link_smartdns_lib() {
     */
     if std::path::Path::new(&smartdns_lib_file).exists() && !cfg!(feature = "build-release") {
         println!("cargo:rerun-if-changed={}", smartdns_lib_file);
-        println!("cargo:rustc-link-search=native={}", PathBuf::from(&smartdns_lib_file).parent().unwrap().display());
+        println!(
+            "cargo:rustc-link-search=native={}",
+            PathBuf::from(&smartdns_lib_file)
+                .parent()
+                .unwrap()
+                .display()
+        );
         println!("cargo:rustc-link-lib=static=smartdns-test");
         println!("cargo:rustc-link-lib=ssl");
         println!("cargo:rustc-link-lib=crypto");

@@ -1,0 +1,81 @@
+name: Build Runtime Assets
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - main
+    tags:
+      - "v*"
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang llvm-dev libclang-dev pkg-config make
+
+      - name: Build plugin
+        run: make
+
+      - name: Prepare runtime bundle
+        run: |
+          rm -rf release
+          mkdir -p release/runtime/dist
+          mkdir -p release/runtime/etc
+          mkdir -p release/runtime/db
+          mkdir -p release/runtime/log
+          mkdir -p release/docker/dist
+          mkdir -p release/docker/etc
+          mkdir -p release/docker/db
+          mkdir -p release/docker/log
+          cp target/smartdns_plus_ui.so release/runtime/dist/smartdns_plus_ui.so
+          cp -a wwwroot release/runtime/dist/wwwroot
+          cp docker/etc/smartdns.conf release/runtime/etc/smartdns.conf
+          cp -a docker/etc/conf.d release/runtime/etc/conf.d
+          cp -a docker/etc/rules release/runtime/etc/rules
+          cp docker/compose.yaml release/runtime/compose.yaml
+          cp docker/compose.yaml release/docker/compose.yaml
+          cp docker/etc/smartdns.conf release/docker/etc/smartdns.conf
+          cp -a docker/etc/conf.d release/docker/etc/conf.d
+          cp -a docker/etc/rules release/docker/etc/rules
+          cp target/smartdns_plus_ui.so release/docker/dist/smartdns_plus_ui.so
+          cp -a wwwroot release/docker/dist/wwwroot
+          cp README.md release/README.md
+          tar -C release -czf smartdns-plus-ui-runtime.tar.gz runtime README.md
+          tar -C release -czf smartdns-plus-ui-docker-runtime.tar.gz docker README.md
+
+      - name: Upload runtime artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: smartdns-plus-ui-runtime
+          path: |
+            release/runtime
+            smartdns-plus-ui-runtime.tar.gz
+
+      - name: Upload docker runtime artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: smartdns-plus-ui-docker-runtime
+          path: |
+            release/docker
+            smartdns-plus-ui-docker-runtime.tar.gz
+
+      - name: Upload release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            smartdns-plus-ui-runtime.tar.gz
+            smartdns-plus-ui-docker-runtime.tar.gz

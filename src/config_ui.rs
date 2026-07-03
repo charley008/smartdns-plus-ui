@@ -4,13 +4,18 @@ use std::fs;
 use std::io;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 const MANAGED_BEGIN: &str = "# BEGIN smartdns-plus-ui managed";
 const MANAGED_END: &str = "# END smartdns-plus-ui managed";
-const BASIC_FILE_NAME: &str = "plus-ui-basic.conf";
-const UPSTREAMS_FILE_NAME: &str = "plus-ui-upstreams.conf";
-const RULES_FILE_NAME: &str = "plus-ui-rules.conf";
+const SERVICE_FILE_NAME: &str = "10-basic.conf";
+const UPSTREAMS_FILE_NAME: &str = "20-upstreams.conf";
+const PERFORMANCE_FILE_NAME: &str = "30-cache.conf";
+const ROUTING_FILE_NAME: &str = "40-nameserver.conf";
+const RULES_FILE_NAME: &str = "50-rules.conf";
+const SETS_FILE_NAME: &str = "60-sets.conf";
+const LOGGING_FILE_NAME: &str = "70-logging.conf";
+const NETWORK_FILE_NAME: &str = "80-network.conf";
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -250,6 +255,18 @@ pub struct ConfigOverview {
     pub working_config_text: String,
 }
 
+#[derive(Debug, Default)]
+struct ManagedPageTexts {
+    service: String,
+    upstreams: String,
+    performance: String,
+    routing: String,
+    rules: String,
+    sets: String,
+    logging: String,
+    network: String,
+}
+
 pub fn config_file_from_settings(config_file: Option<String>) -> String {
     config_file.unwrap_or_else(|| "/etc/smartdns/smartdns.conf".to_string())
 }
@@ -262,10 +279,24 @@ pub fn read_overview(config_file: &str, rules_dir: &str) -> io::Result<ConfigOve
     let main_config_text = read_text_or_default(config_file)?;
     let managed_block_present = main_config_text.contains(MANAGED_BEGIN);
     let managed_dir = managed_conf_dir(rules_dir);
-    let managed_basic_text = read_text_or_default(&path_join(&managed_dir, BASIC_FILE_NAME))?;
-    let managed_upstreams_text =
-        read_text_or_default(&path_join(&managed_dir, UPSTREAMS_FILE_NAME))?;
-    let managed_rules_text = read_text_or_default(&path_join(&managed_dir, RULES_FILE_NAME))?;
+    let page_texts = read_managed_page_texts(&managed_dir)?;
+    let service_text = page_texts.service;
+    let upstreams_text = page_texts.upstreams;
+    let performance_text = page_texts.performance;
+    let routing_text = page_texts.routing;
+    let rules_text = page_texts.rules;
+    let sets_text = page_texts.sets;
+    let logging_text = page_texts.logging;
+    let network_text = page_texts.network;
+    let managed_basic_text = join_nonempty_sections(&[
+        service_text.clone(),
+        performance_text.clone(),
+        logging_text.clone(),
+        network_text.clone(),
+    ]);
+    let managed_upstreams_text = upstreams_text.clone();
+    let managed_rules_text =
+        join_nonempty_sections(&[routing_text.clone(), rules_text.clone(), sets_text.clone()]);
     let config_sources = collect_config_sources(config_file)?;
     let routing_items = parse_routing_items(&config_sources);
     let rule_set_assets = build_rule_set_assets(&routing_items);
@@ -280,8 +311,15 @@ pub fn read_overview(config_file: &str, rules_dir: &str) -> io::Result<ConfigOve
 
     let aggregate = if !working_config_text.trim().is_empty() {
         working_config_text.clone()
-    } else if !managed_basic_text.trim().is_empty() || !managed_upstreams_text.trim().is_empty() {
-        format!("{}\n{}", managed_basic_text, managed_upstreams_text)
+    } else if !managed_basic_text.trim().is_empty()
+        || !managed_upstreams_text.trim().is_empty()
+        || !managed_rules_text.trim().is_empty()
+    {
+        join_nonempty_sections(&[
+            managed_basic_text.clone(),
+            managed_upstreams_text.clone(),
+            managed_rules_text.clone(),
+        ])
     } else {
         main_config_text.clone()
     };
@@ -307,11 +345,10 @@ pub fn read_overview(config_file: &str, rules_dir: &str) -> io::Result<ConfigOve
         ip_set_assets,
         explanations: explanation_items(),
         recommendations: recommendations_for(&beginner),
-        rule_files: vec![
-            rule_file_info(&managed_dir, BASIC_FILE_NAME)?,
-            rule_file_info(&managed_dir, UPSTREAMS_FILE_NAME)?,
-            rule_file_info(&managed_dir, RULES_FILE_NAME)?,
-        ],
+        rule_files: managed_file_names()
+            .iter()
+            .map(|name| rule_file_info(&managed_dir, name))
+            .collect::<io::Result<Vec<_>>>()?,
         validation,
         managed_assets,
         working_config_text,
@@ -328,19 +365,35 @@ pub fn save_beginner_config(
         return Ok(validation);
     }
 
-    let basic_text = render_basic_config(&request.beginner);
+    let service_text = render_service_config(&request.beginner);
     let upstreams_text = render_upstreams_config(&request.beginner);
-    let rules_text = normalize_rules_text(&request.rules_text);
+    let performance_text = render_performance_config(&request.beginner);
+    let logging_text = render_logging_config(&request.beginner);
+    let network_text = render_network_config(&request.beginner);
+    let assets = parse_managed_assets_from_text(&normalize_rules_text(&request.rules_text));
+    let routing_text = render_routing_items_text(&assets);
+    let rules_text = render_rule_entries_text(&assets);
+    let sets_text = render_sets_text(&assets);
 
     let managed_dir = managed_conf_dir(rules_dir);
-    write_text_atomic(&path_join(&managed_dir, BASIC_FILE_NAME), &basic_text)?;
-    write_text_atomic(&path_join(&managed_dir, UPSTREAMS_FILE_NAME), &upstreams_text)?;
-    write_text_atomic(&path_join(&managed_dir, RULES_FILE_NAME), &rules_text)?;
+    write_text_with_backup_if_changed(&path_join(&managed_dir, SERVICE_FILE_NAME), &service_text)?;
+    write_text_with_backup_if_changed(
+        &path_join(&managed_dir, UPSTREAMS_FILE_NAME),
+        &upstreams_text,
+    )?;
+    write_text_with_backup_if_changed(
+        &path_join(&managed_dir, PERFORMANCE_FILE_NAME),
+        &performance_text,
+    )?;
+    write_text_with_backup_if_changed(&path_join(&managed_dir, ROUTING_FILE_NAME), &routing_text)?;
+    write_text_with_backup_if_changed(&path_join(&managed_dir, RULES_FILE_NAME), &rules_text)?;
+    write_text_with_backup_if_changed(&path_join(&managed_dir, SETS_FILE_NAME), &sets_text)?;
+    write_text_with_backup_if_changed(&path_join(&managed_dir, LOGGING_FILE_NAME), &logging_text)?;
+    write_text_with_backup_if_changed(&path_join(&managed_dir, NETWORK_FILE_NAME), &network_text)?;
 
     let current = read_text_or_default(config_file)?;
     let new_main = ensure_managed_block(&current, rules_dir);
     if new_main != current {
-        backup_file(config_file)?;
         write_text_atomic(config_file, &new_main)?;
     }
 
@@ -352,7 +405,6 @@ pub fn apply_working_config(config_file: &str, rules_dir: &str) -> io::Result<()
     let current = read_text_or_default(config_file)?;
     let new_main = ensure_managed_block(&current, rules_dir);
     if new_main != current {
-        backup_file(config_file)?;
         write_text_atomic(config_file, &new_main)?;
     }
     Ok(())
@@ -368,7 +420,7 @@ pub fn list_backups(config_file: &str) -> io::Result<Vec<BackupInfo>> {
         .file_name()
         .and_then(|x| x.to_str())
         .unwrap_or("smartdns.conf");
-    let prefix = format!("{}.smartdns-plus-ui.bak.", file_name);
+    let exact_name = format!("{}.backup", file_name);
     let mut backups = Vec::new();
 
     for entry in fs::read_dir(parent)? {
@@ -378,7 +430,7 @@ pub fn list_backups(config_file: &str) -> io::Result<Vec<BackupInfo>> {
             Some(name) => name,
             None => continue,
         };
-        if !name.starts_with(&prefix) {
+        if name != exact_name {
             continue;
         }
         let modified_unix = entry
@@ -400,7 +452,6 @@ pub fn list_backups(config_file: &str) -> io::Result<Vec<BackupInfo>> {
 
 pub fn restore_backup(config_file: &str, backup_path: &str) -> io::Result<()> {
     let backup_text = fs::read_to_string(backup_path)?;
-    backup_file(config_file)?;
     write_text_atomic(config_file, &backup_text)
 }
 
@@ -415,7 +466,10 @@ pub fn read_rule_set_detail(
     let routing_items = parse_routing_items(&config_sources);
     let rule_set_assets = build_rule_set_assets(&routing_items);
 
-    let Some(asset) = rule_set_assets.into_iter().find(|candidate| candidate.name == name) else {
+    let Some(asset) = rule_set_assets
+        .into_iter()
+        .find(|candidate| candidate.name == name)
+    else {
         return Ok(None);
     };
 
@@ -540,6 +594,41 @@ fn managed_conf_dir(rules_dir: &str) -> String {
     parent.join("conf.d").to_string_lossy().to_string()
 }
 
+fn managed_file_names() -> [&'static str; 8] {
+    [
+        SERVICE_FILE_NAME,
+        UPSTREAMS_FILE_NAME,
+        PERFORMANCE_FILE_NAME,
+        SETS_FILE_NAME,
+        ROUTING_FILE_NAME,
+        RULES_FILE_NAME,
+        LOGGING_FILE_NAME,
+        NETWORK_FILE_NAME,
+    ]
+}
+
+fn join_nonempty_sections(parts: &[String]) -> String {
+    parts
+        .iter()
+        .map(|text| text.trim())
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn read_managed_page_texts(managed_dir: &str) -> io::Result<ManagedPageTexts> {
+    Ok(ManagedPageTexts {
+        service: read_text_or_default(&path_join(managed_dir, SERVICE_FILE_NAME))?,
+        upstreams: read_text_or_default(&path_join(managed_dir, UPSTREAMS_FILE_NAME))?,
+        performance: read_text_or_default(&path_join(managed_dir, PERFORMANCE_FILE_NAME))?,
+        routing: read_text_or_default(&path_join(managed_dir, ROUTING_FILE_NAME))?,
+        rules: read_text_or_default(&path_join(managed_dir, RULES_FILE_NAME))?,
+        sets: read_text_or_default(&path_join(managed_dir, SETS_FILE_NAME))?,
+        logging: read_text_or_default(&path_join(managed_dir, LOGGING_FILE_NAME))?,
+        network: read_text_or_default(&path_join(managed_dir, NETWORK_FILE_NAME))?,
+    })
+}
+
 fn write_text_atomic(path: &str, content: &str) -> io::Result<()> {
     let target = Path::new(path);
     if let Some(parent) = target.parent() {
@@ -562,6 +651,17 @@ fn write_text_atomic(path: &str, content: &str) -> io::Result<()> {
     Ok(())
 }
 
+fn write_text_with_backup_if_changed(path: &str, content: &str) -> io::Result<()> {
+    let current = read_text_or_default(path)?;
+    if current == content {
+        return Ok(());
+    }
+    if Path::new(path).exists() {
+        backup_file(path)?;
+    }
+    write_text_atomic(path, content)
+}
+
 fn backup_file(path: &str) -> io::Result<()> {
     let target = Path::new(path);
     if !target.exists() {
@@ -572,13 +672,46 @@ fn backup_file(path: &str) -> io::Result<()> {
         .file_name()
         .and_then(|x| x.to_str())
         .unwrap_or("smartdns.conf");
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let backup_name = format!("{}.smartdns-plus-ui.bak.{}", file_name, ts);
+    let backup_name = format!("{}.backup", file_name);
     let backup_path = parent.join(backup_name);
     fs::copy(target, backup_path)?;
+    prune_backup_files(path, 1)?;
+    Ok(())
+}
+
+fn prune_backup_files(path: &str, keep: usize) -> io::Result<()> {
+    let target = Path::new(path);
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = target
+        .file_name()
+        .and_then(|x| x.to_str())
+        .unwrap_or("smartdns.conf");
+    let exact_name = format!("{}.backup", file_name);
+
+    let mut backups: Vec<(u64, PathBuf)> = Vec::new();
+    for entry in fs::read_dir(parent)? {
+        let entry = entry?;
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|x| x.to_str()) else {
+            continue;
+        };
+        if name != exact_name {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        backups.push((modified, path));
+    }
+
+    backups.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, old_path) in backups.into_iter().skip(keep) {
+        let _ = fs::remove_file(old_path);
+    }
     Ok(())
 }
 
@@ -594,15 +727,14 @@ fn normalize_rules_text(text: &str) -> String {
     }
 }
 
-fn render_basic_config(config: &BeginnerConfig) -> String {
+fn render_service_config(config: &BeginnerConfig) -> String {
     let mut lines = Vec::new();
     lines.push("# ═══════════════════════════════════════════".to_string());
-    lines.push("#  SmartDNS 基础配置".to_string());
+    lines.push("#  SmartDNS 基础设置".to_string());
     lines.push("#  由 SmartDNS Plus UI 生成".to_string());
     lines.push("# ═══════════════════════════════════════════".to_string());
     lines.push(String::new());
 
-    // Service
     if !config.server_name.trim().is_empty() {
         lines.push(format!("server-name {}", config.server_name.trim()));
     }
@@ -617,59 +749,162 @@ fn render_basic_config(config: &BeginnerConfig) -> String {
             lines.push(format!("bind {}", trimmed));
         }
     }
-    // bind-tcp from extras, render right after bind
-    if let Some(bt) = config.extras.get("bind-tcp") {
-        let v = bt.trim();
+    for bind_tcp in split_list_extra(config, "bind-tcp") {
+        let v = bind_tcp.trim();
         if !v.is_empty() {
             lines.push(format!("bind-tcp {}", v));
         }
     }
+    lines.push(String::new());
+    if !split_list_extra(config, "bind-tls").is_empty()
+        || !split_list_extra(config, "bind-https").is_empty()
+    {
+        lines.push("# ── TLS / HTTPS 监听 ──".to_string());
+        for bind_tls in split_list_extra(config, "bind-tls") {
+            let v = bind_tls.trim();
+            if !v.is_empty() {
+                lines.push(format!("bind-tls {}", v));
+            }
+        }
+        for bind_https in split_list_extra(config, "bind-https") {
+            let v = bind_https.trim();
+            if !v.is_empty() {
+                lines.push(format!("bind-https {}", v));
+            }
+        }
+        push_extra_if_present(&mut lines, config, "bind-cert-file");
+        push_extra_if_present(&mut lines, config, "bind-cert-key-file");
+        push_extra_if_present(&mut lines, config, "bind-cert-generate");
+        push_extra_if_present(&mut lines, config, "bind-cert-san");
+        push_extra_if_present(&mut lines, config, "bind-cert-key-pass");
+        push_extra_if_present(&mut lines, config, "bind-cert-root-key-file");
+        push_extra_if_present(&mut lines, config, "bind-cert-validity-days");
+    }
+    lines.push(String::new());
+    lines.push("# ── 响应与测速 ──".to_string());
+    push_kv(
+        &mut lines,
+        "response-mode",
+        &config.response_mode,
+        "first-ping",
+    );
+    push_kv(
+        &mut lines,
+        "speed-check-mode",
+        &config.speed_check_mode,
+        "ping,tcp:80,tcp:443",
+    );
+    lines.push(String::new());
+    lines.push("# ── 运行参数 ──".to_string());
+    push_bool(&mut lines, "mdns-lookup", config.mdns_lookup);
+    push_extra_if_present(&mut lines, config, "user");
+    push_extra_if_present(&mut lines, config, "socket-buff-size");
+    push_extra_bool_if_present(&mut lines, config, "no-daemon");
+    push_extra_bool_if_present(&mut lines, config, "restart-on-crash");
+    push_extra_bool_if_present(&mut lines, config, "expand-ptr-from-address");
+    lines.push(String::new());
+    lines.push("# ── 代理 / Hosts / 证书 ──".to_string());
+    push_extra_if_present(&mut lines, config, "proxy-server");
+    push_extra_if_present(&mut lines, config, "hosts-file");
+    push_extra_if_present(&mut lines, config, "ca-file");
+    push_extra_if_present(&mut lines, config, "ca-path");
+    let conf_files = split_list_extra(config, "conf-file");
+    if !conf_files.is_empty() {
+        lines.push(String::new());
+        lines.push("# ── 自定义引入配置 ──".to_string());
+        lines.extend(
+            conf_files
+                .into_iter()
+                .map(|line| format!("conf-file {}", line)),
+        );
+    }
 
-    // Cache & performance
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn render_performance_config(config: &BeginnerConfig) -> String {
+    let mut lines = Vec::new();
+    lines.push("# ═══════════════════════════════════════════".to_string());
+    lines.push("#  SmartDNS 缓存与性能".to_string());
+    lines.push("#  由 SmartDNS Plus UI 生成".to_string());
+    lines.push("# ═══════════════════════════════════════════".to_string());
     lines.push(String::new());
     lines.push("# ── 缓存 ──".to_string());
     push_kv(&mut lines, "cache-size", &config.cache_size, "32768");
     push_bool(&mut lines, "prefetch-domain", config.prefetch_domain);
     push_bool(&mut lines, "serve-expired", config.serve_expired);
-    push_kv(&mut lines, "serve-expired-ttl", &config.serve_expired_ttl, "86400");
-
-    // Response & speed
+    push_kv(
+        &mut lines,
+        "serve-expired-ttl",
+        &config.serve_expired_ttl,
+        "86400",
+    );
+    push_extra_if_present(&mut lines, config, "cache-persist");
+    push_extra_if_present(&mut lines, config, "cache-file");
     lines.push(String::new());
-    lines.push("# ── 响应与测速 ──".to_string());
-    push_kv(&mut lines, "response-mode", &config.response_mode, "first-ping");
-    push_kv(&mut lines, "speed-check-mode", &config.speed_check_mode, "ping,tcp:80,tcp:443");
-    push_bool(&mut lines, "dualstack-ip-selection", config.dualstack_ip_selection);
-
-    // Logging & audit
+    lines.push("# ── TTL 与查询控制 ──".to_string());
+    push_extra_if_present(&mut lines, config, "rr-ttl-min");
+    push_extra_if_present(&mut lines, config, "rr-ttl-max");
+    push_extra_if_present(&mut lines, config, "rr-ttl-reply-max");
+    push_extra_if_present(&mut lines, config, "local-ttl");
+    push_extra_if_present(&mut lines, config, "max-reply-ip-num");
+    push_extra_if_present(&mut lines, config, "max-query-limit");
+    push_extra_if_present(&mut lines, config, "tcp-idle-time");
+    push_extra_if_present(&mut lines, config, "serve-expired-reply-ttl");
+    push_extra_if_present(&mut lines, config, "serve-expired-prefetch-time");
     lines.push(String::new());
-    lines.push("# ── 日志与审计 ──".to_string());
+    lines.push("# ── 双栈优选 ──".to_string());
+    push_bool(
+        &mut lines,
+        "dualstack-ip-selection",
+        config.dualstack_ip_selection,
+    );
+    push_extra_if_present(&mut lines, config, "dualstack-ip-selection-threshold");
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn render_logging_config(config: &BeginnerConfig) -> String {
+    let mut lines = Vec::new();
+    lines.push("# ═══════════════════════════════════════════".to_string());
+    lines.push("#  SmartDNS 日志与审计".to_string());
+    lines.push("#  由 SmartDNS Plus UI 生成".to_string());
+    lines.push("# ═══════════════════════════════════════════".to_string());
+    lines.push(String::new());
+    lines.push("# ── 日志 ──".to_string());
     push_kv(&mut lines, "log-level", &config.log_level, "info");
-    push_bool(&mut lines, "mdns-lookup", config.mdns_lookup);
+    push_extra_if_present(&mut lines, config, "log-file");
+    push_extra_if_present(&mut lines, config, "log-size");
+    push_extra_if_present(&mut lines, config, "log-num");
+    push_extra_bool_if_present(&mut lines, config, "log-console");
+    push_extra_bool_if_present(&mut lines, config, "log-syslog");
+    lines.push(String::new());
+    lines.push("# ── 审计 ──".to_string());
     push_bool(&mut lines, "audit-enable", config.audit_enable);
+    push_extra_if_present(&mut lines, config, "audit-file");
+    push_extra_if_present(&mut lines, config, "audit-size");
+    push_extra_if_present(&mut lines, config, "audit-num");
+    push_extra_bool_if_present(&mut lines, config, "audit-console");
+    lines.push(String::new());
+    lines.join("\n")
+}
 
-    // Extras
-    let skip_prefixes = ["smartdns-plus-ui.", "smartdns-ui."];
-    let skip_exact = ["plugin", "data-dir", "bind-tcp"];
-    let mut extra_keys: Vec<&String> = config.extras.keys().collect();
-    extra_keys.sort();
-    let has_extras = extra_keys.iter().any(|k| {
-        !skip_prefixes.iter().any(|p| k.starts_with(p)) && !skip_exact.contains(&k.as_str())
-    });
-    if has_extras {
-        lines.push(String::new());
-        lines.push("# ── 其他设置 ──".to_string());
-        for key in extra_keys {
-            if skip_prefixes.iter().any(|p| key.starts_with(p)) { continue; }
-            if skip_exact.contains(&key.as_str()) { continue; }
-            if let Some(value) = config.extras.get(key) {
-                let v = value.trim();
-                if !v.is_empty() {
-                    lines.push(format!("{} {}", key, v));
-                }
-            }
-        }
-    }
-
+fn render_network_config(config: &BeginnerConfig) -> String {
+    let mut lines = Vec::new();
+    lines.push("# ═══════════════════════════════════════════".to_string());
+    lines.push("#  SmartDNS 高级网络".to_string());
+    lines.push("#  由 SmartDNS Plus UI 生成".to_string());
+    lines.push("# ═══════════════════════════════════════════".to_string());
+    lines.push(String::new());
+    push_extra_if_present(&mut lines, config, "force-qtype-SOA");
+    push_extra_bool_if_present(&mut lines, config, "force-AAAA-SOA");
+    push_extra_bool_if_present(&mut lines, config, "force-no-CNAME");
+    push_extra_if_present(&mut lines, config, "edns-client-subnet");
+    push_extra_if_present(&mut lines, config, "dns64");
+    push_extra_if_present(&mut lines, config, "ddns-domain");
+    push_extra_if_present(&mut lines, config, "local-domain");
+    push_extra_if_present(&mut lines, config, "dnsmasq-lease-file");
     lines.push(String::new());
     lines.join("\n")
 }
@@ -691,7 +926,9 @@ fn render_upstreams_config(config: &BeginnerConfig) -> String {
     let mut grouped: BTreeMap<String, Vec<&UpstreamConfig>> = BTreeMap::new();
     let mut ungrouped = Vec::new();
     for u in &upstreams {
-        if u.value.trim().is_empty() { continue; }
+        if u.value.trim().is_empty() {
+            continue;
+        }
         if let Some(first) = u.groups.first() {
             grouped.entry(first.clone()).or_default().push(u);
         } else {
@@ -779,9 +1016,9 @@ fn ensure_managed_block(main_config_text: &str, rules_dir: &str) -> String {
     let managed_dir = managed_conf_dir(rules_dir);
     let mut include_lines = Vec::new();
     include_lines.push(MANAGED_BEGIN.to_string());
-    include_lines.push(format!("conf-file {}", path_join(&managed_dir, BASIC_FILE_NAME)));
-    include_lines.push(format!("conf-file {}", path_join(&managed_dir, UPSTREAMS_FILE_NAME)));
-    include_lines.push(format!("conf-file {}", path_join(&managed_dir, RULES_FILE_NAME)));
+    for name in managed_file_names() {
+        include_lines.push(format!("conf-file {}", path_join(&managed_dir, name)));
+    }
     include_lines.push(MANAGED_END.to_string());
     let block = include_lines.join("\n");
 
@@ -799,11 +1036,9 @@ fn ensure_managed_block(main_config_text: &str, rules_dir: &str) -> String {
                 merged.push_str("\n\n");
             }
             merged.push_str(&block);
+            let after = after.trim_start_matches(|c| c == '\r' || c == '\n');
             if !after.trim().is_empty() {
-                merged.push('\n');
-                if !after.starts_with('\n') {
-                    merged.push('\n');
-                }
+                merged.push_str("\n\n");
                 merged.push_str(after);
             } else {
                 merged.push('\n');
@@ -823,9 +1058,17 @@ fn ensure_managed_block(main_config_text: &str, rules_dir: &str) -> String {
 
 fn render_effective_config_preview(main_config_text: &str, rules_dir: &str) -> io::Result<String> {
     let managed_dir = managed_conf_dir(rules_dir);
-    let basic = read_text_or_default(&path_join(&managed_dir, BASIC_FILE_NAME))?;
-    let upstreams = read_text_or_default(&path_join(&managed_dir, UPSTREAMS_FILE_NAME))?;
-    let rules = read_text_or_default(&path_join(&managed_dir, RULES_FILE_NAME))?;
+    let page_texts = read_managed_page_texts(&managed_dir)?;
+    let managed_texts = vec![
+        page_texts.service,
+        page_texts.upstreams,
+        page_texts.performance,
+        page_texts.routing,
+        page_texts.rules,
+        page_texts.sets,
+        page_texts.logging,
+        page_texts.network,
+    ];
 
     let mut lines = Vec::new();
     let mut in_managed_block = false;
@@ -835,22 +1078,18 @@ fn render_effective_config_preview(main_config_text: &str, rules_dir: &str) -> i
         if trimmed == MANAGED_BEGIN {
             in_managed_block = true;
             lines.push(line.to_string());
-
-            if !basic.trim().is_empty() {
-                lines.push(String::new());
-                lines.extend(basic.lines().map(|item| item.to_string()));
-            }
-            if !upstreams.trim().is_empty() {
-                if !basic.trim().is_empty() {
+            let mut first = true;
+            for text in &managed_texts {
+                if text.trim().is_empty() {
+                    continue;
+                }
+                if first {
+                    lines.push(String::new());
+                    first = false;
+                } else {
                     lines.push(String::new());
                 }
-                lines.extend(upstreams.lines().map(|item| item.to_string()));
-            }
-            if !rules.trim().is_empty() {
-                if !basic.trim().is_empty() || !upstreams.trim().is_empty() {
-                    lines.push(String::new());
-                }
-                lines.extend(rules.lines().map(|item| item.to_string()));
+                lines.extend(text.lines().map(|item| item.to_string()));
             }
             continue;
         }
@@ -906,11 +1145,26 @@ fn parse_beginner_config(text: &str) -> BeginnerConfig {
             "log-level" => cfg.log_level = value.to_string(),
             "mdns-lookup" => cfg.mdns_lookup = parse_yesno(value, false),
             "audit-enable" => cfg.audit_enable = parse_yesno(value, false),
-            "server" | "server-tcp" | "server-tls" | "server-https" | "server-quic" | "server-http3" | "server-h3" => {
+            "server" | "server-tcp" | "server-tls" | "server-https" | "server-quic"
+            | "server-http3" | "server-h3" => {
                 let mut value_parts = value.splitn(2, char::is_whitespace);
                 let server_value = value_parts.next().unwrap_or("").trim().to_string();
                 let server_opts = value_parts.next().unwrap_or("").trim().to_string();
-                cfg.upstreams.push(parse_upstream_config(key, &server_value, &server_opts));
+                cfg.upstreams
+                    .push(parse_upstream_config(key, &server_value, &server_opts));
+            }
+            "bind-tcp" | "bind-tls" | "bind-https" | "conf-file" => {
+                if value.is_empty() {
+                    continue;
+                }
+                if let Some(existing) = cfg.extras.get_mut(key) {
+                    if !existing.is_empty() {
+                        existing.push('\n');
+                    }
+                    existing.push_str(value);
+                } else {
+                    cfg.extras.insert(key.to_string(), value.to_string());
+                }
             }
             _ => {
                 // Collect unknown directives into extras (covers ALL official config)
@@ -1092,15 +1346,16 @@ fn parse_routing_items(sources: &[ConfigSource]) -> Vec<RoutingRuleItem> {
                 }
                 "domain-set" => {
                     if let Some(name) = parse_named_option(value, "-name") {
-                        let set_type =
-                            parse_named_option(value, "-type").unwrap_or_else(|| "list".to_string());
+                        let set_type = parse_named_option(value, "-type")
+                            .unwrap_or_else(|| "list".to_string());
                         let file = parse_named_option(value, "-file").unwrap_or_default();
                         items.push(RoutingRuleItem {
                             rule_type: "domain-set".to_string(),
                             target: name,
                             value: format!("type={} file={}", set_type, file),
                             source: source.path.clone(),
-                            note: "定义一个可被 nameserver 或 domain-rules 引用的域名集合".to_string(),
+                            note: "定义一个可被 nameserver 或 domain-rules 引用的域名集合"
+                                .to_string(),
                         });
                     }
                 }
@@ -1294,7 +1549,12 @@ fn build_rule_group_assets(sources: &[ConfigSource]) -> Vec<RuleGroupAsset> {
 
             match key {
                 "group-begin" => {
-                    let name = value.split_whitespace().next().unwrap_or("").trim().to_string();
+                    let name = value
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
                     let inherit = parse_named_option(value, "-inherit").unwrap_or_default();
                     assets.push(RuleGroupAsset {
                         name,
@@ -1307,7 +1567,12 @@ fn build_rule_group_assets(sources: &[ConfigSource]) -> Vec<RuleGroupAsset> {
                 }
                 "conf-file" => {
                     if let Some(group_name) = parse_named_option(value, "-group") {
-                        let include_file = value.split_whitespace().next().unwrap_or("").trim().to_string();
+                        let include_file = value
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or("")
+                            .trim()
+                            .to_string();
                         assets.push(RuleGroupAsset {
                             name: group_name,
                             inherit: String::new(),
@@ -1349,7 +1614,12 @@ fn build_rule_group_assets(sources: &[ConfigSource]) -> Vec<RuleGroupAsset> {
 
             match key {
                 "group-begin" => {
-                    let name = value.split_whitespace().next().unwrap_or("").trim().to_string();
+                    let name = value
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
                     let inherit = parse_named_option(value, "-inherit").unwrap_or_default();
                     stack.push(PendingGroupAsset {
                         name,
@@ -1438,7 +1708,12 @@ fn build_client_rule_assets(sources: &[ConfigSource]) -> Vec<ClientRuleAsset> {
 
             match key {
                 "group-begin" => {
-                    let name = value.split_whitespace().next().unwrap_or("").trim().to_string();
+                    let name = value
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
                     group_stack.push(name);
                 }
                 "group-end" => {
@@ -1488,7 +1763,12 @@ fn build_ip_rule_assets(sources: &[ConfigSource]) -> Vec<IpRuleAsset> {
 
             match key {
                 "group-begin" => {
-                    let name = value.split_whitespace().next().unwrap_or("").trim().to_string();
+                    let name = value
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
                     group_stack.push(name);
                 }
                 "group-end" => {
@@ -1565,7 +1845,8 @@ fn build_ip_set_assets(
                 for group in rule_groups {
                     for matcher in &group.matchers {
                         if matcher.contains(&marker) {
-                            referenced_by.push(format!("group-match -> {} ({})", group.name, matcher));
+                            referenced_by
+                                .push(format!("group-match -> {} ({})", group.name, matcher));
                         }
                     }
                 }
@@ -1617,7 +1898,8 @@ fn render_detected_rules_text(items: &[RoutingRuleItem]) -> String {
 
     let mut lines = vec![
         "# Detected by smartdns-plus-ui".to_string(),
-        "# 下面是从当前主配置和 conf-file 中识别出来的现有规则，只读展示，不会直接覆盖原文件。".to_string(),
+        "# 下面是从当前主配置和 conf-file 中识别出来的现有规则，只读展示，不会直接覆盖原文件。"
+            .to_string(),
         String::new(),
     ];
 
@@ -1739,6 +2021,48 @@ fn push_bool(lines: &mut Vec<String>, key: &str, value: bool) {
     lines.push(format!("{} {}", key, if value { "yes" } else { "no" }));
 }
 
+fn push_extra_if_present(lines: &mut Vec<String>, config: &BeginnerConfig, key: &str) {
+    if let Some(value) = config.extras.get(key) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            lines.push(format!("{} {}", key, trimmed));
+        }
+    }
+}
+
+fn push_extra_bool_if_present(lines: &mut Vec<String>, config: &BeginnerConfig, key: &str) {
+    if let Some(value) = config.extras.get(key) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            lines.push(format!(
+                "{} {}",
+                key,
+                if parse_yesno(trimmed, false) {
+                    "yes"
+                } else {
+                    "no"
+                }
+            ));
+        }
+    }
+}
+
+fn split_list_extra(config: &BeginnerConfig, key: &str) -> Vec<String> {
+    config
+        .extras
+        .get(key)
+        .map(|value| {
+            value
+                .lines()
+                .flat_map(|line| line.split(','))
+                .map(str::trim)
+                .filter(|item| !item.is_empty() && !item.starts_with('#'))
+                .map(|item| item.to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
 fn validate_beginner_config(config: &BeginnerConfig, rules_text: &str) -> ValidationResult {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
@@ -1838,7 +2162,8 @@ fn explanation_items() -> Vec<ExplanationItem> {
         ExplanationItem {
             key: "upstreams".to_string(),
             title: "上游 DNS".to_string(),
-            description: "SmartDNS 会向这些 DNS 服务器发起查询，再把更快的结果返回给客户端。".to_string(),
+            description: "SmartDNS 会向这些 DNS 服务器发起查询，再把更快的结果返回给客户端。"
+                .to_string(),
             recommendation: "至少配置两个不同来源的上游，提高可用性。".to_string(),
             caution: "只配一个上游时，一旦它异常就容易影响解析。".to_string(),
         },
@@ -1854,7 +2179,9 @@ fn recommendations_for(config: &BeginnerConfig) -> Vec<String> {
         items.push("你关闭了预取缓存；如果更看重体感速度，建议开启 prefetch-domain。".to_string());
     }
     if !config.serve_expired {
-        items.push("你关闭了过期缓存兜底；遇到上游 DNS 抖动时，网页可能更容易短暂打不开。".to_string());
+        items.push(
+            "你关闭了过期缓存兜底；遇到上游 DNS 抖动时，网页可能更容易短暂打不开。".to_string(),
+        );
     }
     if config.log_level.eq_ignore_ascii_case("debug") {
         items.push("当前日志级别为 debug，适合排错，但长期运行可能产生更多日志。".to_string());
@@ -1963,7 +2290,12 @@ pub fn parse_managed_assets_from_text(text: &str) -> ManagedAssets {
 
         match key {
             "group-begin" => {
-                let name = value.split_whitespace().next().unwrap_or("").trim().to_string();
+                let name = value
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
                 let inherit = parse_named_option(value, "-inherit").unwrap_or_default();
                 in_group = Some(ManagedRuleGroup {
                     name,
@@ -1991,8 +2323,8 @@ pub fn parse_managed_assets_from_text(text: &str) -> ManagedAssets {
                     group_name,
                 });
             }
-            "ip-rules" | "whitelist-ip" | "blacklist-ip" | "ignore-ip"
-            | "bogus-nxdomain" | "ip-alias" => {
+            "ip-rules" | "whitelist-ip" | "blacklist-ip" | "ignore-ip" | "bogus-nxdomain"
+            | "ip-alias" => {
                 let (target, options) = split_target_options(value);
                 let group_name = in_group
                     .as_ref()
@@ -2016,9 +2348,14 @@ pub fn parse_managed_assets_from_text(text: &str) -> ManagedAssets {
             "domain-set" => {
                 let name = parse_named_option(value, "-name").unwrap_or_default();
                 let file = parse_named_option(value, "-file").unwrap_or_default();
-                let set_type = parse_named_option(value, "-type").unwrap_or_else(|| "list".to_string());
+                let set_type =
+                    parse_named_option(value, "-type").unwrap_or_else(|| "list".to_string());
                 if !name.is_empty() {
-                    domain_sets.push(ManagedDomainSet { name, file, set_type });
+                    domain_sets.push(ManagedDomainSet {
+                        name,
+                        file,
+                        set_type,
+                    });
                 }
             }
             "ip-set" => {
@@ -2047,9 +2384,17 @@ pub fn parse_managed_assets_from_text(text: &str) -> ManagedAssets {
 }
 
 pub fn render_managed_assets_text(assets: &ManagedAssets) -> String {
+    join_nonempty_sections(&[
+        render_sets_text(assets),
+        render_routing_items_text(assets),
+        render_rule_entries_text(assets),
+    ])
+}
+
+fn render_sets_text(assets: &ManagedAssets) -> String {
     let mut lines: Vec<String> = Vec::new();
     lines.push("# Generated by smartdns-plus-ui".to_string());
-    lines.push("# 管理规则组的图形化编辑结果。".to_string());
+    lines.push("# 集合管理（domain-set / ip-set）".to_string());
     lines.push(String::new());
 
     if !assets.domain_sets.is_empty() {
@@ -2071,40 +2416,67 @@ pub fn render_managed_assets_text(assets: &ManagedAssets) -> String {
         lines.push(String::new());
     }
 
-    if !assets.rule_groups.is_empty() {
-        lines.push("# ── 规则组 ──".to_string());
-        for group in &assets.rule_groups {
-            if group.inherit.is_empty() {
-                lines.push(format!("group-begin {}", group.name));
-            } else {
-                lines.push(format!(
-                    "group-begin {} -inherit {}",
-                    group.name, group.inherit
-                ));
-            }
-            for matcher in &group.matchers {
-                lines.push(format!("group-match {}", matcher));
-            }
-            lines.push("group-end".to_string());
-            lines.push(String::new());
-        }
+    if lines.len() <= 3 {
+        lines.push("# 还没有任何集合定义。".to_string());
     }
 
-    if !assets.client_rules.is_empty() {
-        lines.push("# ── 客户端规则 ──".to_string());
-        let mut by_group: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for rule in &assets.client_rules {
-            by_group
-                .entry(rule.group_name.clone())
-                .or_default()
-                .push(rule.matcher.clone());
-        }
-        for (group_name, matchers) in &by_group {
-            for matcher in matchers {
-                lines.push(format!("client-rules {}", matcher));
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn render_routing_items_text(assets: &ManagedAssets) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    lines.push("# Generated by smartdns-plus-ui".to_string());
+    lines.push("# 上游分流（nameserver）".to_string());
+    lines.push(String::new());
+
+    let routing_items: Vec<&ManagedRoutingItem> = assets
+        .routing_items
+        .iter()
+        .filter(|item| item.rule_type == "nameserver")
+        .collect();
+    if !routing_items.is_empty() {
+        lines.push("# ── 分流规则 ──".to_string());
+        for item in routing_items {
+            if item.value.is_empty() {
+                lines.push(format!("{} {}", item.rule_type, item.target));
+            } else {
+                lines.push(format!("{} {}/{}", item.rule_type, item.target, item.value));
             }
-            if !group_name.is_empty() {
-                lines.push(format!("# (属于规则组: {})", group_name));
+        }
+        lines.push(String::new());
+    }
+
+    if lines.len() <= 3 {
+        lines.push("# 还没有任何上游分流规则。".to_string());
+    }
+
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn render_rule_entries_text(assets: &ManagedAssets) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    lines.push("# Generated by smartdns-plus-ui".to_string());
+    lines.push("# 规则（domain-rules / address / cname / ip-rules）".to_string());
+    lines.push(String::new());
+
+    let non_nameserver_routing: Vec<&ManagedRoutingItem> = assets
+        .routing_items
+        .iter()
+        .filter(|item| item.rule_type != "nameserver")
+        .collect();
+    if !non_nameserver_routing.is_empty() {
+        lines.push("# ── 域名规则与地址改写 ──".to_string());
+        for item in non_nameserver_routing {
+            let mut target = item.target.clone();
+            if !target.ends_with('/') {
+                target.push('/');
+            }
+            if item.value.is_empty() {
+                lines.push(format!("{} {}", item.rule_type, target));
+            } else {
+                lines.push(format!("{} {} {}", item.rule_type, target, item.value));
             }
         }
         lines.push(String::new());
@@ -2116,30 +2488,17 @@ pub fn render_managed_assets_text(assets: &ManagedAssets) -> String {
             if rule.options.is_empty() {
                 lines.push(format!("{} {}", rule.rule_type, rule.target));
             } else {
-                lines.push(format!("{} {} {}", rule.rule_type, rule.target, rule.options));
-            }
-            if !rule.group_name.is_empty() {
-                lines.push(format!("# (规则组: {})", rule.group_name));
-            }
-        }
-        lines.push(String::new());
-    }
-
-    if !assets.routing_items.is_empty() {
-        lines.push("# ── 分流规则 ──".to_string());
-        for item in &assets.routing_items {
-            if item.value.is_empty() {
-                lines.push(format!("{} {}", item.rule_type, item.target));
-            } else {
-                lines.push(format!("{} {} {}", item.rule_type, item.target, item.value));
+                lines.push(format!(
+                    "{} {} {}",
+                    rule.rule_type, rule.target, rule.options
+                ));
             }
         }
         lines.push(String::new());
     }
 
     if lines.len() <= 3 {
-        lines.push("# 还没有任何托管规则。".to_string());
-        lines.push("# 你可以通过图形界面新增规则组、客户端规则、IP 规则或分流规则。".to_string());
+        lines.push("# 还没有任何规则。".to_string());
     }
 
     lines.push(String::new());
@@ -2168,13 +2527,24 @@ pub fn save_managed_assets(
         return Ok(validation);
     }
 
-    let rules_text = render_managed_assets_text(&assets);
-    write_text_atomic(&path_join(&managed_dir, RULES_FILE_NAME), &rules_text)?;
+    write_text_with_backup_if_changed(
+        &path_join(&managed_dir, ROUTING_FILE_NAME),
+        &render_routing_items_text(&assets),
+    )?;
+    write_text_with_backup_if_changed(
+        &path_join(&managed_dir, RULES_FILE_NAME),
+        &render_rule_entries_text(&assets),
+    )?;
+    write_text_with_backup_if_changed(
+        &path_join(&managed_dir, SETS_FILE_NAME),
+        &render_sets_text(&assets),
+    )?;
 
-    backup_file(config_file)?;
     let main_config_text = read_text_or_default(config_file)?;
     let new_main_config = ensure_managed_block(&main_config_text, rules_dir);
-    write_text_atomic(config_file, &new_main_config)?;
+    if new_main_config != main_config_text {
+        write_text_atomic(config_file, &new_main_config)?;
+    }
 
     Ok(validation)
 }
@@ -2283,13 +2653,12 @@ pub fn save_ip_set_file(
     name: &str,
     request: &SaveRuleSetFileRequest,
 ) -> io::Result<RuleSetFileDetail> {
-    let detail =
-        read_ip_set_detail(config_file, name, None, 0, 200)?.ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("ip set `{}` not found", name),
-            )
-        })?;
+    let detail = read_ip_set_detail(config_file, name, None, 0, 200)?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("ip set `{}` not found", name),
+        )
+    })?;
 
     if detail.file.trim().is_empty() {
         return Err(io::Error::new(

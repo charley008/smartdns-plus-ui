@@ -16,9 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-
-mod server;
 mod client;
+mod server;
 
-pub use server::*;
 pub use client::*;
+pub use server::*;

@@ -253,7 +253,10 @@ fn test_rest_api_log_level() {
     assert_eq!(code, 204);
     println!("body: {}", body);
 
-    assert_eq!(smartdns_plus_ui::smartdns::dns_log_get_level(), LogLevel::ERROR);
+    assert_eq!(
+        smartdns_plus_ui::smartdns::dns_log_get_level(),
+        LogLevel::ERROR
+    );
 }
 
 #[test]
@@ -309,7 +312,6 @@ fn test_rest_api_audit_log_stream() {
     _ = socket.send(tungstenite::Message::Text("aaaa".to_string()));
     _ = socket.close(None);
 }
-
 
 #[test]
 fn test_rest_api_get_by_id() {
@@ -565,7 +567,9 @@ fn test_rest_api_stats_overview() {
         smartdns_plus_ui::smartdns::smartdns_c::dns_stats
             .request
             .blocked_count = 10;
-        smartdns_plus_ui::smartdns::smartdns_c::dns_stats.request.total = 15;
+        smartdns_plus_ui::smartdns::smartdns_c::dns_stats
+            .request
+            .total = 15;
 
         server_name = smartdns_plus_ui::smartdns::smartdns_get_server_name();
     }
@@ -599,7 +603,9 @@ fn test_rest_api_stats_metrics() {
         smartdns_plus_ui::smartdns::smartdns_c::dns_stats
             .request
             .blocked_count = 10;
-        smartdns_plus_ui::smartdns::smartdns_c::dns_stats.request.total = 15;
+        smartdns_plus_ui::smartdns::smartdns_c::dns_stats
+            .request
+            .total = 15;
     }
 
     for i in 0..1024 {
@@ -704,7 +710,10 @@ fn test_rest_api_cache_domains() {
     assert_eq!(code, 200, "Expected 200 OK, got {}", code);
 
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert!(json.get("domains").is_some(), "Response missing 'domains' field");
+    assert!(
+        json.get("domains").is_some(),
+        "Response missing 'domains' field"
+    );
     let domains = json["domains"].as_array().unwrap();
 
     for domain in domains {

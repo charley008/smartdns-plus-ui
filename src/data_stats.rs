@@ -347,13 +347,12 @@ impl DataStats {
         if total_blocked_count == 0 {
             let mut parm = DomainListGetParam::new();
             parm.is_blocked = Some(true);
-            
+
             let count = self.db.get_domain_list_count(Some(&parm));
             total_blocked_count = count;
         }
         self.data.add_total_blocked_request(total_blocked_count);
 
-        
         // load request drop count
         let mut request_drop = 0 as u64;
         let status_data_request_drop = status_data.get("request_drop");
@@ -395,10 +394,8 @@ impl DataStats {
             "total_failed_request",
             self.get_total_failed_request().to_string().as_str(),
         )?;
-        self.db.set_status_data(
-            "request_drop",
-            self.get_request_drop().to_string().as_str(),
-        )?;
+        self.db
+            .set_status_data("request_drop", self.get_request_drop().to_string().as_str())?;
 
         Ok(())
     }
@@ -422,11 +419,11 @@ impl DataStats {
             .delete_domain_before_timestamp(now - self.conf.read().unwrap().max_log_age_ms as u64);
         if let Err(e) = ret {
             if e.to_string() != "Query returned no rows" {
-              dns_log!(
-                LogLevel::WARN,
-                "delete domain before timestamp error: {}",
-                e
-              );
+                dns_log!(
+                    LogLevel::WARN,
+                    "delete domain before timestamp error: {}",
+                    e
+                );
             }
         }
 

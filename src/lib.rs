@@ -16,11 +16,11 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+pub mod config_ui;
 pub mod data_server;
 pub mod data_stats;
 pub mod data_upstream_server;
 pub mod db;
-pub mod config_ui;
 pub mod http_api_msg;
 pub mod http_error;
 pub mod http_jwt;

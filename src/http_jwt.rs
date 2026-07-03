@@ -52,7 +52,7 @@ impl Jwt {
         if !self.is_token_valid(token) {
             return Err("token is invalid".to_string());
         }
-        
+
         Ok(self.encode_token())
     }
 

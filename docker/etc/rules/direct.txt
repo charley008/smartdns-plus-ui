@@ -1,0 +1,5 @@
+# Domains that should go direct
+msftconnecttest.com
+msftncsi.com
+connectivitycheck.gstatic.com
+

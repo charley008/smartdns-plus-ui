@@ -66,7 +66,10 @@ pub fn get_free_disk_space(path: &str) -> u64 {
     statvfs.f_bsize as u64 * statvfs.f_bavail as u64
 }
 
-pub fn hash_password(password: &str, round: Option<u32>) -> Result<String, Box<dyn std::error::Error>> {
+pub fn hash_password(
+    password: &str,
+    round: Option<u32>,
+) -> Result<String, Box<dyn std::error::Error>> {
     let salt = SaltString::generate(&mut OsRng);
     let mut parm = pbkdf2::Params::default();
     parm.rounds = round.unwrap_or(10000);
@@ -75,6 +78,10 @@ pub fn hash_password(password: &str, round: Option<u32>) -> Result<String, Box<d
         .map_err(|e| e.to_string())?
         .to_string();
     Ok(password_hash)
+}
+
+pub fn generate_secret() -> String {
+    SaltString::generate(&mut OsRng).to_string()
 }
 
 pub fn verify_password(password: &str, password_hash: &str) -> bool {
