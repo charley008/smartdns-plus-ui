@@ -278,11 +278,11 @@ cd /projects/smartdns-plus-ui
 
 ```text
 runtime/
-├─ compose.yaml
 ├─ db/
 ├─ dist/
 │  ├─ smartdns_plus_ui.so
 │  └─ wwwroot/
+├─ install.sh
 ├─ log/
 └─ etc/
    ├─ smartdns.conf
@@ -318,7 +318,24 @@ cd /projects/smartdns-plus-ui
 - `smartdns-plus-ui-runtime.tar.gz`
 - `smartdns-plus-ui-docker-runtime.tar.gz`
 
-这样别人从 GitHub Actions 或 Release 下载后，解压出来就能直接作为 Docker 运行目录的一部分使用，不需要本地再编译 `.so`。
+如果对方已经在 Linux 上以非 Docker 形式安装了 SmartDNS，那么下载 `smartdns-plus-ui-runtime.tar.gz` 后，解压进入 `runtime/` 目录，直接执行：
+
+```sh
+sudo bash ./install.sh
+```
+
+这个脚本会：
+
+1. 把 `dist/smartdns_plus_ui.so` 复制到 `/usr/lib/smartdns/`
+2. 把 `dist/wwwroot/` 复制到 `/usr/share/smartdns-plus/wwwroot/`
+3. 把 `etc/conf.d/`、`etc/rules/` 初始化到 `/etc/smartdns/`
+4. 初始化或更新 `/etc/smartdns/smartdns.conf`
+5. 尝试重启 `smartdns` 服务
+
+其中：
+
+- `smartdns-plus-ui-runtime` 面向“已经安装好 SmartDNS，只需要补插件与 WebUI 文件”的环境，所以不包含 `compose.yaml`
+- `smartdns-plus-ui-docker-runtime` 面向 Docker 运行目录，才包含 `compose.yaml`
 
 ## 配置写入方式
 

@@ -45,7 +45,7 @@ jobs:
           cp docker/etc/smartdns.conf release/runtime/etc/smartdns.conf
           cp -a docker/etc/conf.d release/runtime/etc/conf.d
           cp -a docker/etc/rules release/runtime/etc/rules
-          cp docker/compose.yaml release/runtime/compose.yaml
+          cp scripts/install-runtime-package.sh release/runtime/install.sh
           cp docker/compose.yaml release/docker/compose.yaml
           cp docker/etc/smartdns.conf release/docker/etc/smartdns.conf
           cp -a docker/etc/conf.d release/docker/etc/conf.d
