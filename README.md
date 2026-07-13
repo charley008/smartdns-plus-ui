@@ -74,6 +74,7 @@ sudo bash ./install.sh
 ```text
 /data/smartdns/
 ├─ compose.yaml
+├─ Dockerfile
 ├─ dist/
 │  ├─ smartdns_plus_ui.so
 │  └─ wwwroot/
@@ -93,7 +94,7 @@ sudo bash ./install.sh
 
 ```sh
 cd /data/smartdns
-docker compose up -d
+docker compose up -d --build
 ```
 
 如果你已经有自己的运行目录，也可以在源码仓库里直接补上插件文件：
@@ -120,9 +121,9 @@ volumes:
   - ./etc:/etc/smartdns
   - ./db:/var/lib/smartdns
   - ./log:/var/log/smartdns
-  - ./dist/smartdns_plus_ui.so:/usr/lib/smartdns/smartdns_plus_ui.so:ro
-  - ./dist/wwwroot:/usr/share/smartdns-plus/wwwroot:ro
 ```
+
+`smartdns_plus_ui.so` 和 `wwwroot` 会在镜像构建时复制到容器镜像层，避免 NAS 目录的 `noexec` 挂载导致插件加载失败。更新 `dist/` 后请重新执行 `docker compose up -d --build`。
 
 默认模板目录在仓库中：
 

@@ -2,15 +2,16 @@ services:
   smartdns:
     container_name: smartdns
     restart: always
-    image: pymumu/smartdns:latest
+    image: smartdns-plus-ui:local
+    build:
+      context: .
+      dockerfile: Dockerfile
     environment:
       - TZ=CST-8
     volumes:
       - ./etc:/etc/smartdns
       - ./db:/var/lib/smartdns
       - ./log:/var/log/smartdns
-      - ./dist/smartdns_plus_ui.so:/usr/lib/smartdns/smartdns_plus_ui.so:ro
-      - ./dist/wwwroot:/usr/share/smartdns-plus/wwwroot:ro
     network_mode: host
     # If you do not use host network, remove the line above and expose ports instead:
     # ports:
