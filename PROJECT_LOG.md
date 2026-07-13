@@ -167,9 +167,11 @@
 - 查询日志 API 的 SQLite `domain` 表保存请求摘要，不保存最终 DNS Answer 或实际参与的上游。
 - `smartdns.log` 与 `smartdns-audit.log` 都能包含部分返回 IP；但文本日志轮转且不适合作为结构化追踪数据源。
 - SmartDNS 的选优过程可能包含多个上游与多个候选 IP，因此“使用哪个上游”不能简化为单值字段。
+- 上游统计的 SmartDNS 核心 API 未暴露原始 URL、分组或稳定服务器 ID；`-host-ip` 场景下运行时 host 可能为连接 IP。
 
 ### Actions
 - 新增 `TODO.md`，定义查询追踪的数据范围、存储期限、实施阶段和验收条件。
+- 在 `TODO.md` 记录上游服务器身份映射的核心 API 前置条件。
 - 暂不修改 SmartDNS 核心、插件 API 或数据库结构。
 
 ### Modified Files
