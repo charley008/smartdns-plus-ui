@@ -29,7 +29,6 @@ cp "$PROJECT_DIR/scripts/install-runtime-package.sh" "$RELEASE_DIR/runtime/insta
 
 echo "[4/5] copy docker runtime assets"
 cp "$PROJECT_DIR/docker/compose.yaml" "$RELEASE_DIR/docker/compose.yaml"
-cp "$PROJECT_DIR/docker/Dockerfile" "$RELEASE_DIR/docker/Dockerfile"
 cp "$PROJECT_DIR/target/smartdns_plus_ui.so" "$RELEASE_DIR/docker/dist/smartdns_plus_ui.so"
 cp -a "$PROJECT_DIR/wwwroot" "$RELEASE_DIR/docker/dist/wwwroot"
 cp "$PROJECT_DIR/docker/etc/smartdns.conf" "$RELEASE_DIR/docker/etc/smartdns.conf"

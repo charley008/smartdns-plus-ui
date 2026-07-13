@@ -46,7 +46,6 @@ jobs:
           cp -a docker/etc/rules release/runtime/etc/rules
           cp scripts/install-runtime-package.sh release/runtime/install.sh
           cp docker/compose.yaml release/docker/compose.yaml
-          cp docker/Dockerfile release/docker/Dockerfile
           cp docker/etc/smartdns.conf release/docker/etc/smartdns.conf
           cp -a docker/etc/conf.d release/docker/etc/conf.d
           cp -a docker/etc/rules release/docker/etc/rules
