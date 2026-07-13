@@ -73,7 +73,13 @@ async function login() {
   try{await refreshAuthSession();}catch(_){}
   showApp();
 }
-async function logout(){localStorage.removeItem("sp_token");showLogin();$("nav").classList.add("hidden");$("sidebarFoot").classList.add("hidden");$("main").classList.add("hidden");}
+async function logout(){
+  // The server stores the active session in an HttpOnly cookie. Clearing only
+  // localStorage leaves that cookie valid and lets a page refresh log in again.
+  try{await api("/api/auth/logout",{method:"POST"});}catch(_){/* Clear the local UI even if the session already expired. */}
+  localStorage.removeItem("sp_token");
+  showLogin();$("nav").classList.add("hidden");$("sidebarFoot").classList.add("hidden");$("main").classList.add("hidden");
+}
 async function checkAuth(){
   try{
     await api("/api/auth/check");
