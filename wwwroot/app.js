@@ -33,6 +33,8 @@ const MANAGED_CONF_FILES = [
 ];
 const THEME_KEY = "sp_theme";
 const CONFIG_PAGES = ["service","upstreams","performance","routing","rules","sets","logging","advanced","preview"];
+let authRefreshTimer = null;
+let authExpired = false;
 
 const META = {
   dashboard:  {t:"仪表盘", d:"总查询、QPS、缓存命中率、趋势概览" },
@@ -56,36 +58,67 @@ const META = {
 function ah() { const t=localStorage.getItem("sp_token"); return t?{Authorization:t}:{}; }
 async function api(url,o={}) {
   const r=await fetch(url,{credentials:"same-origin",...o,headers:{"Content-Type":"application/json",...ah(),...(o.headers||{})}});
-  if(!r.ok){const t=await r.text();throw new Error(t||`HTTP ${r.status}`);}
+  if(!r.ok){
+    const t=await r.text();
+    const e=new Error(t||`HTTP ${r.status}`);
+    e.status=r.status;
+    if(r.status===401&&!url.startsWith("/api/auth/"))handleAuthExpired();
+    throw e;
+  }
   const t=await r.text(); return t?JSON.parse(t):{};
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────
+function stopAuthRefresh(){
+  if(authRefreshTimer){clearTimeout(authRefreshTimer);authRefreshTimer=null;}
+}
+function scheduleAuthRefresh(expiresIn){
+  stopAuthRefresh();
+  const seconds=Number.parseInt(expiresIn,10);
+  // Renew halfway through the server-issued lifetime. A 30-second floor avoids
+  // tight retry loops if the server is configured with an unusually short TTL.
+  const delay=Math.max(30,Number.isFinite(seconds)?Math.floor(seconds/2):300)*1000;
+  authRefreshTimer=setTimeout(async()=>{
+    try{await refreshAuthSession();}
+    catch(e){if(e.status===401)handleAuthExpired();else scheduleAuthRefresh(expiresIn);}
+  },delay);
+}
+function handleAuthExpired(){
+  if(authExpired)return;
+  authExpired=true;
+  stopAuthRefresh();
+  localStorage.removeItem("sp_token");
+  showLogin();$("nav").classList.add("hidden");$("sidebarFoot").classList.add("hidden");$("main").classList.add("hidden");
+}
 async function refreshAuthSession(){
   const r=await api("/api/auth/refresh",{method:"POST"});
   if(r?.token)localStorage.setItem("sp_token",`Bearer ${r.token}`);
+  scheduleAuthRefresh(r?.expires_in);
   return r;
 }
 
 async function login() {
   const r=await api("/api/auth/login",{method:"POST",body:JSON.stringify({username:$("username").value.trim(),password:$("password").value})});
   localStorage.setItem("sp_token",`Bearer ${r.token}`);
-  try{await refreshAuthSession();}catch(_){}
+  authExpired=false;
+  scheduleAuthRefresh(r?.expires_in);
   showApp();
 }
 async function logout(){
   // The server stores the active session in an HttpOnly cookie. Clearing only
   // localStorage leaves that cookie valid and lets a page refresh log in again.
   try{await api("/api/auth/logout",{method:"POST"});}catch(_){/* Clear the local UI even if the session already expired. */}
+  stopAuthRefresh();
   localStorage.removeItem("sp_token");
   showLogin();$("nav").classList.add("hidden");$("sidebarFoot").classList.add("hidden");$("main").classList.add("hidden");
 }
 async function checkAuth(){
   try{
     await api("/api/auth/check");
-    try{await refreshAuthSession();}catch(_){}
+    authExpired=false;
+    await refreshAuthSession();
     showApp();
-  }catch(_){showLogin();}
+  }catch(_){handleAuthExpired();}
 }
 
 function clearPasswordChangeForm(){
@@ -532,7 +565,10 @@ function renderRankList(items,key){
 function queryLogParams(page=S.queryLog.page){
   const params=new URLSearchParams({page_num:String(page),page_size:String(S.queryLog.pageSize),order:"desc"});
   const {domain="",client="",group="",blocked=""}=S.queryLog.filters||{};
-  if(domain)params.set("domain",domain);
+  if(domain){
+    params.set("domain",domain);
+    params.set("domain_filter_mode","contains");
+  }
   if(client)params.set("client",client);
   if(group)params.set("domain_group",group);
   if(blocked!=="")params.set("is_blocked",blocked);

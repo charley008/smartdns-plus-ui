@@ -185,3 +185,77 @@
 ### Next
 - 继续收集和定位现有 Web UI 功能问题。
 - 查询追踪进入实施前，先确认 SmartDNS 核心可提供的最小响应与选优回调。
+
+## [2026-07-13 14:20]
+
+### Goal
+修复 Web UI 闲置一段时间后请求返回 `Please login.` 的问题。
+
+### Findings
+- 部署示例把 `smartdns-plus-ui.token-expire` 设为 600 秒。
+- 后端已有 `/api/auth/refresh`，会签发新 JWT 并更新 HttpOnly Cookie。
+- 前端此前只在登录和首次加载时刷新，闲置超过 token 有效期后不会自动续期。
+
+### Actions
+- 前端按服务器返回的 `expires_in` 在 token 半程自动刷新会话。
+- 普通 API 请求收到 401 时清除本地 token 并回到登录页，避免继续显示加载失败。
+- 将新部署示例的 token 有效期调整为 24 小时；旧配置仍可通过自动续期保持会话。
+- 运行 `node --check wwwroot/app.js` 与 `git diff --check`。
+
+### Modified Files
+- wwwroot/app.js: 增加会话自动续期和统一的过期处理。
+- docker/etc/smartdns.conf: 将示例 token 有效期从 600 秒调整为 86400 秒。
+- PROJECT_LOG.md: 记录认证会话修复。
+
+### Result
+已登录且页面保持打开时，Web UI 会在会话过半前自动续期；真正过期时会干净地回到登录页。
+
+### Next
+- 在容器环境中保持页面闲置超过原 600 秒，确认请求仍正常返回。
+
+## [2026-07-13 14:35]
+
+### Goal
+让查询日志的域名筛选支持子域名和关键字查询。
+
+### Findings
+- 未传 `domain_filter_mode` 时，后端会使用严格的 `domain = ?` 比较。
+- 后端已有参数化的 `contains` 模式，会生成 `domain LIKE ?` 且保留其他筛选条件。
+
+### Actions
+- 查询日志请求在填写域名条件时传入 `domain_filter_mode=contains`。
+- 运行前端语法与补丁检查。
+
+### Modified Files
+- wwwroot/app.js: 域名查询改为包含匹配。
+- PROJECT_LOG.md: 记录本次筛选行为调整。
+
+### Result
+输入 `google.com` 可匹配 `google.com`、`www.google.com` 等包含该片段的查询记录。
+
+### Next
+- 继续收集查询日志展示与审计信息的改进需求。
+
+## [2026-07-13 15:05]
+
+### Goal
+修复标签构建无法创建 GitHub Release，且 Actions artifact 重复嵌套压缩包的问题。
+
+### Findings
+- Actions run `28649667453` 的编译和两项 artifact 上传均成功；Release 上传因 `GITHUB_TOKEN` 仅有 `contents: read` 而返回 403。
+- artifact 同时上传目录与对应 `.tar.gz`，下载的 GitHub zip 因而包含两套相同内容。
+
+### Actions
+- 为发布工作流声明 `permissions: contents: write`，允许标签构建创建 Release 并上传 assets。
+- Actions artifact 只上传可直接解压使用的 `runtime` 或 `docker` 目录。
+- 保留 `.tar.gz` 仅作为 GitHub Release 的下载文件。
+
+### Modified Files
+- .github/workflows/build-runtime-assets.yml: 修复 Release 权限与 artifact 内容。
+- PROJECT_LOG.md: 记录 CI 发布问题和修复策略。
+
+### Result
+新的标签构建应能创建 Release；从 Actions 下载 artifact 后不再出现目录和二次压缩包并存的情况。
+
+### Next
+- 提交并推送后，以新标签触发构建，确认 Release assets 与 artifact 目录结构。
