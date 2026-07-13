@@ -9,6 +9,9 @@ Cargo.lock
 *.log
 *.bak
 *.orig
+HANDOFF-*.md
+PROJECT_LOG.md
+TODO.md
 
 # OS/editor noise
 .DS_Store
