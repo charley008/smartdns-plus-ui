@@ -258,17 +258,15 @@ pub fn smartdns_version() -> String {
 }
 
 pub fn smartdns_ui_version() -> String {
-    let mut ver = env!("CARGO_PKG_VERSION").to_string();
+    let git_version = env!("GIT_VERSION").trim();
 
-    if env!("GIT_VERSION").is_empty() {
-        return ver;
+    // The release tag is the single public version source. For local builds,
+    // git describe still provides an identifiable commit-based version.
+    if !git_version.is_empty() {
+        return git_version.to_string();
     }
 
-    ver.push_str(" (");
-    ver.push_str(env!("GIT_VERSION"));
-    ver.push_str(")");
-
-    ver
+    env!("CARGO_PKG_VERSION").to_string()
 }
 
 pub fn smartdns_get_server_name() -> String {
