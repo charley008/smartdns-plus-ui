@@ -268,7 +268,11 @@ function fmtBytes(v){
 
 function fmtDateTime(ts){
   if(!ts)return "-";
-  const d=new Date(Number(ts)*1000);
+  const value=Number(ts);
+  if(!Number.isFinite(value))return "-";
+  // SmartDNS stores query timestamps in milliseconds. Keep second-based legacy
+  // values readable without multiplying already-millisecond timestamps again.
+  const d=new Date(value<100000000000?value*1000:value);
   if(Number.isNaN(d.getTime()))return "-";
   return d.toLocaleString("zh-CN",{hour12:false});
 }
